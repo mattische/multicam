@@ -23,6 +23,7 @@ Bygger på `omarchy-capture-screenrecording` (ersätter bara `...-with-webcam`).
 - B2. TUI:t kan styras helt med tangentbordet. Ingen funktion kräver mus.
 - B3. Formulär: kamera A, kamera B (var och en "av" eller en enhet, samma enhet kan inte väljas två gånger), mikrofon (lista eller "ingen"), skrivbordsljud på/av, form (rektangel/cirkel) per kamera, ring på/av, bakgrund bort på/av per kamera (om tillägget finns), skärm att spela in (den fokuserade som standard).
 - B4. Senaste val sparas i `~/.config/multicam/config` och förifylls nästa gång.
+- B6. Vad som spelas in: formulärraden `Spela in` väljer `hel skärm`, `område` eller `fönster` (sparas som CAPTURE). I läge område/fönster körs Omarchys väljare (`omarchy-capture-region region|windows`) när förhandsvisningen startas; avbryts valet går användaren tillbaka till formuläret utan att något startar. Den valda rektangeln blir kamerornas gränser (kamerorna hålls inom det inspelade området) och spelas in via Omarchys eget inspelningsskript. Tangent `o` väljer om. Fönster spelas in som den rektangel det hade vid start.
 - B5. Kamera- och mikrofonlistor läses vid start. Saknas en sparad enhet markeras den tydligt och väljs aldrig om i tysthet.
 
 ### C. Inspelning
@@ -70,6 +71,9 @@ Alla testkörningar ska städa efter sig. Tester markerade (M) kräver att anvä
 | T-A6 | A6 | install-bgremove, sedan uninstall-bgremove | En mapp skapad/borttagen |
 | T-B2 | B2 | Driv hela TUI:t med `wtype`/pty utan mus | Alla val nåbara och ändringsbara |
 | T-B4 | B4 | Ändra val, avsluta, starta om | Val förifyllda |
+| T-B6a | B6 | Läge område (väljaren ersatt med stub som ger fast rektangel): förhandsvisa, spela in 4 s | Kameror inuti rektangeln (även efter snap/förstoring), MP4-storlek = rektangel x skärmskala, kamerabild syns i bildruta |
+| T-B6b | B6 | Läge fönster (stub ger ett fönsters rektangel) | Rubrik "Fönster: klass", väljaren anropad med `windows`, MP4 = fönstrets storlek x skala |
+| T-B6c | B6 | Väljaren avbryts (exit 1) | Meddelande, formuläret kvar, inga kamerafönster, ingen inspelning |
 | T-B5 | B5 | Sätt sparad kamera till obefintlig enhet | Tydlig varning, ingen tyst ersättning |
 | T-C1 | C1 | Spela in 8 s, extrahera bild vid 0,2 s | Kameror syns redan vid första bildrutorna |
 | T-C3 | C3 | Välj annan mic, spela in, kontrollera `pactl get-default-source` före/under/efter | Återställd; volymmätning (ffmpeg) visar vald källa |

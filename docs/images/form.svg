@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1000 620" width="1000" height="620" font-family="JetBrainsMono Nerd Font, JetBrains Mono, DejaVu Sans Mono, monospace" font-size="17">
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1000 650" width="1000" height="650" font-family="JetBrainsMono Nerd Font, JetBrains Mono, DejaVu Sans Mono, monospace" font-size="17">
   <defs>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
     </filter>
   </defs>
-  <rect width="1000" height="620" fill="#232433"/>
+  <rect width="1000" height="650" fill="#232433"/>
   <g filter="url(#shadow)">
-    <rect x="30" y="30" width="940" height="560" rx="12" fill="#1a1b26" stroke="#7aa2f7" stroke-width="2"/>
+    <rect x="30" y="30" width="940" height="590" rx="12" fill="#1a1b26" stroke="#7aa2f7" stroke-width="2"/>
   </g>
   <g fill="#c0caf5">
     <text x="60" y="78"><tspan font-weight="bold">multicam 1.0.0</tspan><tspan fill="#565f89">  -  skärm + kameror + mikrofon</tspan></text>
@@ -27,9 +27,10 @@
 
     <text x="60" y="456"> Mikrofon           Audient iD14</text>
     <text x="60" y="484"> Skrivbordsljud     [x] på</text>
-    <text x="60" y="512"> Skärm              fokuserad (DP-1)</text>
-    <text x="60" y="540" fill="#9ece6a"> ▶ Förhandsvisa kameror (inspelningen startar inte än)</text>
+    <text x="60" y="512"> Spela in           <tspan fill="#9ece6a">●</tspan> hel skärm   ○ område   ○ fönster</text>
+    <text x="60" y="540"> Skärm              fokuserad (DP-1)</text>
+    <text x="60" y="568" fill="#9ece6a"> ▶ Förhandsvisa kameror (inspelningen startar inte än)</text>
 
-    <text x="60" y="572" font-size="14" fill="#565f89"> ↑↓ rad   ←→ ändra   Enter växla/välj   C hexkod   c färgväljare   F5 förhandsvisa   q avsluta</text>
+    <text x="60" y="600" font-size="14" fill="#565f89"> ↑↓ rad   ←→ ändra   Enter växla/välj   C hexkod   c färgväljare   F5 förhandsvisa   q avsluta</text>
   </g>
 </svg>

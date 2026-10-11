@@ -80,6 +80,10 @@ def realistic_home(name):
     for rel in ('.config/hypr', '.config/omarchy', '.local/share/omarchy'):
         if os.path.exists(f'{R_}/{rel}'):
             subprocess.run(['cp', '-a', f'{R_}/{rel}', f'{home}/{rel}'], check=True)
+    bl = home + '/.config/hypr/bindings.lua'   # användarens egen multicam-genväg ska inte ingå i baslinjen
+    if os.path.exists(bl):
+        txt = open(bl).read().splitlines(True)
+        open(bl, 'w').write(''.join(l for l in txt if not l.rstrip().endswith('-- multicam')))
     return home
 
 
@@ -185,6 +189,7 @@ def t_b2():
         for _ in range(5): s.send(DOWN)
         s.send(RIGHT); seen.append(('mic', 'ingen' not in s.screen().split('Mikrofon')[1].split('\n')[0]))
         s.send(DOWN); s.send(ENTER); seen.append(('skrivbordsljud', '[x] på' in s.screen().split('Skrivbordsljud')[1].split('\n')[0]))
+        s.send(DOWN); s.send(RIGHT); seen.append(('spela in', '● område' in s.screen()))
         s.send(DOWN); s.send(RIGHT); seen.append(('skärm', 'fokuserad' not in s.screen().split('Skärm')[1].split('\n')[0]))
         s.send(ESC); expect(s.wait_exit(5), 'avslutade inte')
         bad = [n for n, ok in seen if not ok]
@@ -513,7 +518,7 @@ def t_record_main():
         # C1: bild vid 0,2 s
         png = EVID + '/c1-frame-0.2s.png'
         sh(f'ffmpeg -y -v error -ss 0.2 -i "{f}" -frames:v 1 -vf scale=640:-1 "{png}"')
-        R.add('T-C1', 'MANUELL', f'bildruta vid 0,2 s sparad: {png}; kameror i bild kan inte avgöras här: skärmen var låst (lösenordsprompt), så inspelningen visar låsskärmen')
+        R.add('T-C1', 'MANUELL', f'bildruta vid 0,2 s sparad (ej incheckad): {png}; kamerabild i bildrutan granskas manuellt (se visual.py)')
         probs = settle_clean()
         R.add('T-E1(q)', 'GODKÄND' if not probs else 'UNDERKÄND', f'q + j bekräftelse: {probs or "inga fönster/regler/mpv kvar, mic återställd"}')
         shutil.rmtree(o, ignore_errors=True)
@@ -722,6 +727,142 @@ def t_screen_focus():
         shutil.rmtree(o, ignore_errors=True)
 
 
+def picker_stub(rect=None, cancel=False):
+    d = os.path.join(SCRATCH, 'pickstub'); os.makedirs(d, exist_ok=True)
+    open(d + '/omarchy-capture-region', 'w').write(
+        f'#!/bin/bash\necho "$@" >> {d}/args\n[[ -f {d}/cancel ]] && exit 1\ncat {d}/rect\n')
+    os.chmod(d + '/omarchy-capture-region', 0o755)
+    for f in ('args', 'cancel', 'rect'):
+        if os.path.exists(f'{d}/{f}'): os.unlink(f'{d}/{f}')
+    if cancel: open(d + '/cancel', 'w').write('')
+    if rect: open(d + '/rect', 'w').write(rect + '\n')
+    return d
+
+
+def focused_geo():
+    m = [x for x in monitors() if x['focused']][0]
+    return m['x'], m['y'], int(m['width'] / m['scale']), int(m['height'] / m['scale']), m['scale']
+
+
+def region_test(tid, capture, rect, label_expect=None):
+    wake()
+    d = picker_stub(rect)
+    o = out_dir('b6' + capture)
+    rx, ry, rw, rh = [int(v) for v in re.match(r'(-?\d+),(-?\d+) (\d+)x(\d+)', rect).groups()]
+    s = Session(make_home('b6' + capture, cfg(shape='circle', ring='on', size=200, extra='CAPTURE=' + capture + '\n')
+                          + 'CAM_B_DEV=/dev/video0\nCAM_B_NAME=FaceTime HD Camera\nCAM_B_SHAPE=rect\nCAM_B_RING=on\nCAM_B_COLOR=#00aaff\nCAM_B_SIZE=160\n'
+                          .replace('CAM_B_DEV=\nCAM_B_NAME=\n', '')),
+                o, env={'PATH': d + ':' + os.environ['PATH']})
+    try:
+        start_to_preview(s)
+        expect(wait_until(lambda: len(geo()) == 2, 8), 'kameror saknas')
+        scr = s.screen()
+        g = geo()
+        inside = all(x >= rx and y >= ry and x + w <= rx + rw and y + h <= ry + rh for x, y, w, h in g.values())
+        expect(inside, f'kameror utanför området {rect}: {g}')
+        hdr = [l for l in scr.splitlines() if 'Område' in l or 'Fönster' in l]
+        expect(hdr and (label_expect is None or label_expect in hdr[0]), f'rubrik: {hdr}\n{scr}')
+        # numpad-snap och maxstorlek ska klampas mot området
+        s.send('9', 0.4)
+        for _ in range(30): s.send('+', 0.05)
+        time.sleep(0.4)
+        g = geo()
+        inside2 = all(x >= rx and y >= ry and x + w <= rx + rw and y + h <= ry + rh for x, y, w, h in g.values())
+        expect(inside2, f'kameror utanför efter snap/förstoring: {g}')
+        s.send('1', 0.3); s.send('+', 0.2)
+        s.send(ENTER, 0.3)
+        expect(s.wait_for('SPELAR IN', 25), s.screen())
+        shim_during = os.path.exists(f'{s.home}/../../run/user/1000/multicam')  # (ej relevant)
+        time.sleep(4)
+        run = '/run/user/1000/multicam'
+        sessions = [x for x in os.listdir(run) if x.startswith('s.')]
+        shim_left = [x for x in sessions if os.path.exists(f'{run}/{x}/shim')]
+        frame_g = geo()
+        grim('/tmp/claude-1000/b6-live.png')
+        s.send('q', 0.3); s.send('j', 0.3)
+        expect(s.wait_for('klar', 25), s.screen())
+        f = [x for x in os.listdir(o) if x.endswith('.mp4')]
+        expect(len(f) == 1, os.listdir(o))
+        fp = os.path.join(o, f[0])
+        j = json.loads(sh(f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json "{fp}"').stdout)['streams'][0]
+        out = f'{SCRATCH}/{tid}-frame.png'
+        sh(f'ffmpeg -y -v error -ss 2 -i "{fp}" -frames:v 1 {out}')
+        args = open(d + '/args').read().strip().splitlines() if os.path.exists(d + '/args') else []
+        s.send('n'); s.wait_exit(5)
+        probs = settle_clean()
+        return dict(w=j['width'], h=j['height'], rect=(rx, ry, rw, rh), frame=out, args=args, cams=frame_g, shim_left=shim_left, probs=probs, files=os.listdir(o))
+    finally:
+        s.close()
+        shutil.rmtree(o, ignore_errors=True)
+
+
+@test('T-B6a')
+def t_b6a():
+    fx, fy, fw, fh, sc = focused_geo()
+    rect = f'{fx + 300},{fy + 200} 1200x800'
+    r = region_test('T-B6a', 'region', rect, 'Område 1200x800')
+    R.add('T-B6a', 'GODKÄND' if not r['probs'] and not r['shim_left'] and r['args'] and r['args'][0].startswith('region') else 'UNDERKÄND',
+          f'stub-väljare (anrop: {r["args"]}) gav {rect}; kameror inuti området före och efter snap/förstoring; MP4 {r["w"]}x{r["h"]} (område 1200x800 x skala {sc} = {int(1200*sc)}x{int(800*sc)}); '
+          f'shim kvar efter start: {r["shim_left"]}; städat: {r["probs"] or "ja"}; bildruta (ej incheckad): {r["frame"]}')
+
+
+@test('T-B6b')
+def t_b6b():
+    wake()
+    fx, fy, fw, fh, sc = focused_geo()
+    cands = [c for c in clients() if not c['class'].startswith('Multicam') and c['size'][0] >= 300 and c['size'][1] >= 300
+             and fx <= c['at'][0] < fx + fw and fy <= c['at'][1] < fy + fh]
+    expect(cands, 'inget fönster på fokuserad skärm')
+    c = cands[0]
+    rect = f'{c["at"][0]},{c["at"][1]} {c["size"][0]}x{c["size"][1]}'
+    r = region_test('T-B6b', 'window', rect, 'Fönster: ' + c['class'])
+    R.add('T-B6b', 'GODKÄND' if not r['probs'] and r['args'] and r['args'][0].startswith('windows') else 'UNDERKÄND',
+          f'fönster {c["class"]} {rect}; väljare anropad med "{r["args"]}"; rubrik "Fönster: {c["class"]}"; MP4 {r["w"]}x{r["h"]} (förväntat {int(c["size"][0]*sc)}x{int(c["size"][1]*sc)} vid skala {sc}); städat: {r["probs"] or "ja"}')
+
+
+@test('T-B6c')
+def t_b6c():
+    wake()
+    d = picker_stub(cancel=True)
+    o = out_dir('b6c')
+    s = Session(make_home('b6c', cfg(extra='CAPTURE=region\n')), o, env={'PATH': d + ':' + os.environ['PATH']})
+    try:
+        s.wait_for('Kamera A', 5)
+        s.send(F5, 0.5)
+        got = s.wait_for('Valet avbröts', 5)
+        scr = s.screen()
+        ok = got and 'Kamera A' in scr and not mc_clients() and not gsr_pids() and not [x for x in os.listdir(o)]
+        # formuläret ska fortfarande styras: växla tillbaka till hel skärm och förhandsvisa
+        s.send(UP, 0.2)
+        R.add('T-B6c', 'GODKÄND' if ok else 'UNDERKÄND', f'väljaren avbröt (exit 1): meddelande "Valet avbröts", formuläret kvar, inga kamerafönster/inspelare, utmapp tom={os.listdir(o) == []}')
+        s.send('q'); s.wait_exit(5)
+    finally:
+        s.close()
+        shutil.rmtree(o, ignore_errors=True)
+
+
+@test('T-R1')
+def t_enter_only():
+    """Regression: i förhandsvisningen startar bara Enter inspelningen (inte F5/andra tangenter); kameraregeln har no_anim."""
+    wake()
+    src = open(BIN).read()
+    expect('no_anim=true' in src, 'no_anim saknas i fönsterregeln')
+    s = run_session('r1', cfg(shape='circle'))
+    try:
+        start_to_preview(s)
+        s.send(F5, 0.6); s.send(' ', 0.4); s.send('x', 0.3)
+        time.sleep(1.5)
+        ok1 = not gsr_pids() and 'FÖRHANDSVISNING' in s.screen()
+        s.send(ENTER, 0.3)
+        ok2 = s.wait_for('SPELAR IN', 20) and bool(wait_until(gsr_pids, 5))
+        time.sleep(1.5)
+        s.send('q', 0.3); s.send('j', 0.3); s.wait_for('klar', 25); s.send('n'); s.wait_exit(5)
+        R.add('T-R1', 'GODKÄND' if ok1 and ok2 else 'UNDERKÄND', f'F5/mellanslag/x i förhandsvisning startade inget (gsr={bool(ok1)}); Enter startade; no_anim=true i regeln')
+    finally:
+        s.close()
+        shutil.rmtree(os.path.join(SCRATCH, 'out-r1'), ignore_errors=True)
+
+
 @test('T-E4')
 def t_e4():
     wake()
@@ -799,7 +940,7 @@ def t_e3():
         r = sh("omarchy-shell -q omarchy.indicators refresh; echo rc=$?")
         time.sleep(1)
         s.send('q', 0.3); s.send('j', 0.3); s.wait_for('klar', 25)
-        R.add('T-E3', 'MANUELL', f'gpu-screen-recorder kör under inspelning={gsr} (Omarchys ikon visas av det); indicators refresh: {r.stdout.strip()}; ikonens utseende/klick ej verifierat (låst skärm, kräver musklick)')
+        R.add('T-E3', 'MANUELL', f'gpu-screen-recorder kör under inspelning={gsr} (Omarchys ikon visas av det); indicators refresh: {r.stdout.strip()}; ikonens utseende granskas med tests/visual.py record (e3-bar*.png); verkligt musklick: M')
         s.send('n'); s.wait_exit(5)
     finally:
         s.close()
@@ -828,7 +969,7 @@ def t_x():
         s.send('n'); s.wait_exit(5)
         okx = alive_cams == ['MulticamA', 'MulticamB'] and abs(nb / dur - 60) < 8 and not play
         R.add('T-X1', 'GODKÄND' if okx else 'UNDERKÄND',
-              f'två kameror ({alive_cams}) + cirkel + mic, 30 s: {dur:.1f}s, {nb} bildrutor ({nb / dur:.1f} fps av 60 begärda), ffmpeg-avkodning utan fel={not play}; ej visuellt verifierat att kamerabild syns (låst skärm)')
+              f'två kameror ({alive_cams}) + cirkel + mic, 30 s: {dur:.1f}s, {nb} bildrutor ({nb / dur:.1f} fps av 60 begärda), ffmpeg-avkodning utan fel={not play}; innehållet granskas manuellt (bildruta ej incheckad)')
         # X2: två gånger i rad, ingen rest
         shutil.rmtree(o, ignore_errors=True)
         o = out_dir('x2')

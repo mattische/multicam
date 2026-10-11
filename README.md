@@ -63,6 +63,25 @@ The result is `~/Videos/screenrecording-YYYY-MM-DD-HH_MM_SS.mp4` (h264 + AAC). O
 The selected microphone is set as default source only while recording and always restored afterwards.
 "Screen" defaults to the focused monitor.
 
+### What to record: full screen, area or window
+
+The form row `Spela in` selects `hel skärm` (full screen, default), `område` (free rectangle) or
+`fönster` (a window). When you press `F5` in area/window mode, multicam first runs Omarchy's own picker
+(`omarchy-capture-region region` / `windows`): drag a rectangle with the mouse, or for windows use
+Tab / arrow keys and Enter (Esc cancels and returns to the form with a message; nothing is started).
+The picked rectangle becomes the camera bounds, so cameras, snapping (1-9) and clamping always stay
+inside the recorded area. The preview header shows `Område WxH @ X,Y` / `Fönster: class - title`.
+Press `o` in the preview to pick again (cameras are re-clamped). The `Skärm` row only applies to full screen.
+
+How it works: the recording is still started by `omarchy-capture-screenrecording` (without `--fullscreen`);
+multicam puts a tiny shim `omarchy-capture-region` first in `PATH` for that single start call, which answers with
+the stored rectangle, so Omarchy records `-w region:WxH+X+Y` and does its normal finalize/stop. The shim is removed
+right after start. The video has the physical size of the area (logical size x monitor scale, e.g. 1200x800 on
+a 1.6 scale monitor gives 1920x1280).
+
+Limitations: a window is recorded as the rectangle it had at start; if you move the window the recording does
+not follow. Free-drag area selection needs the mouse (like the colour picker); window selection works with the keyboard.
+
 ### Keys
 
 ![Move mode, size mode and numpad snapping](docs/images/controls.svg)
@@ -87,6 +106,7 @@ Preview / recording screen
 | ↑ ↓ ← → | move 20 px (`[FLYTTA]`) or grow/shrink ±10 % (`[STORLEK]`: ↑ → bigger, ↓ ← smaller) |
 | Shift + arrows | move 100 px, or ±25 % in size mode |
 | `m` | toggle move / size mode (shown in the status line) |
+| `o` | pick the area / window again (area and window modes, not while recording) |
 | `+` `-` / `PgUp` `PgDn` | size ±10 % around the centre (both modes) |
 | `1`-`9` | snap to corner / edge / centre (numpad layout) |
 | `s` | circle / rectangle |

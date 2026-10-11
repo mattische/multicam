@@ -33,6 +33,11 @@ Bevisbilderna visar användarens webbkamerabild och skärm, så de ligger inte i
 | T-B4 | GODKÄND | form/ring/färg/tjocklek sparas och förifylls vid omstart |
 | T-B5 | GODKÄND | saknad kamera: `av   ⚠ saknas: Obefintlig Kamera 9000`, ingen tyst ersättning, enheten bevaras i config |
 | T-B5b | GODKÄND | två "Twin Cam" (video4/video6, stub av `omarchy-capture-webcam-list`): A=video6 och B=video4 bevaras exakt, ingen sammanslagning |
+| T-B6a | GODKÄND | läge område, väljaren ersatt med stub (PATH) som ger `2220,200 1200x800` (anropad med `region`), Omarchys riktiga inspelningsväg via shim: kameror (A cirkel, B rektangel) inuti området, även efter snap `9` och 30x `+`; MP4 **1920x1280** = 1200x800 x skala 1,6 (fysiska px); shim borttagen direkt efter start; allt städat. Bildruta granskad (ej incheckad): visar exakt området med kamerorna inuti |
+| T-B6b | GODKÄND | läge fönster (stub ger foot-fönstrets rektangel 3127,37 1186x1306; anropad med `windows`): rubrik `Fönster: foot ...`, kameror inuti, MP4 1898x2090 (1186x1306 x 1,6 = 1897,6x2089,6 avrundat uppåt) |
+| T-B6c | GODKÄND | stub avbryter (exit 1): "Valet avbröts - ingen inspelning startad", formuläret kvar, inga kamerafönster, ingen inspelare, utmappen tom |
+| T-B6d | GODKÄND (delvis) | riktig väljare (slurp) i riktig terminal: F5 i fönsterläge öppnade slurp; `omarchy-capture-region --take-window` (kommandot Omarchys Enter-bind kör) valde fönstret under markören och multicam öppnade kameror inom den rektangeln; slurp borta efter exit. Tangent via `wtype -k Return` utlöste däremot INTE Omarchys slurp-bindningar i den här miljön (varken i multicam eller fristående `omarchy-capture-region windows`): ej en multicam-bugg men tangentbordsvägen i väljaren är därför overifierad här. Fri musdragning ej testad (mus) |
+| T-R1 | GODKÄND | regression: F5/mellanslag/x i förhandsvisningen startar ingen inspelning, bara Enter; `no_anim=true` i kameraregeln |
 | T-C1 | GODKÄND (granskad bild) | `evidence/c1-frame-0.2s.png`: ffmpeg-bildruta vid 0,2 s i inspelningen visar skrivbordet med båda kamerorna redan på plats: rund bild (C920) med rosa ring till vänster och rektangulär bild (FaceTime) med blå ring i mitten |
 | T-C3 | GODKÄND | `pactl get-default-source`: före=Generic USB, under=C920-mic, efter=Generic USB |
 | T-C3v | GODKÄND | ffmpeg volumedetect mean_volume per vald mic (5 s var): C920 -16,0 dB, Generic USB -83,3 dB, iD14 -91,0 dB; default-source under inspelning var vald mic i alla tre. Skillnad C920/Generic = 67 dB |
@@ -80,3 +85,9 @@ Bevisbilderna visar användarens webbkamerabild och skärm, så de ligger inte i
 - T-C4 mätte tidigare från fel ögonblick (stoppet sker först vid bekräftelsen `j`). Nu mäts från Omarchys pekarfil till att inspelaren avslutats.
 - Omkörda efter rättningarna: T-E1, T-E2 (Ctrl+C 0,06 s, HUP 0,46 s, TERM 0,51 s, utifrån 0,20 s), T-D3/4, T-D5, T-X1, T-X2, T-C3, T-C4, T-C4b: alla godkända.
 - 2026-10-11, efter användarens test: (1) förflyttning kändes seg eftersom Hyprland animerade varje steg (~380 ms). Kamerareglerna har nu `no_anim = true`; skärmdump 120 ms efter 3×Shift+← visar fönstret redan på målplatsen. (2) Inspelningen kunde starta direkt om F5/Enter trycktes flera gånger medan kamerorna öppnades. Nu startar bara Enter inspelningen, och tangenter som buffrats under förhandsvisningens start kastas; test med F5, F5, Enter i snabb följd gav förhandsvisning utan inspelning. Omkört: T-D3/4, T-D5, T-C3, T-C4, T-C4b, T-E1 godkända (T-D5 missade en gång i helkörning p.g.a. tidsmarginal, godkänd 2/2 vid omkörning).
+
+## Tillägg: område/fönster (B6)
+- Version 3: full automatisk svit körd efter funktionen (32 rader + T-R1): allt GODKÄND utom MANUELL-rader (T-C1 bildinnehåll granskas med `tests/visual.py`, T-E3 klick). T-E2s: HUP max 0,70 s, INT max 0,95 s, TERM max 0,73 s, 30/30 (marginalen mot 1,0 s är liten). T-E2: Ctrl+C 0,13 s, HUP 0,63 s.
+- T-A1/A3/A5 anpassade: baslinjen strippar användarens egen `-- multicam`-rad i kopian av bindings.lua.
+- Skalan: gsr producerar fysiska pixlar (logisk storlek x monitorskala), t.ex. 1200x800 -> 1920x1280 på DP-1 (skala 1,6).
+- Begränsning: fönster som flyttas efter start följs inte; fri områdesmarkering kräver mus.

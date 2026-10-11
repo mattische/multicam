@@ -253,6 +253,8 @@ declare -A C            # per kamera: C[A.dev] .name .shape .ring .color .thick 
 declare -A CP PP        # mpv-PID och python-PID per kamera
 CAMS=(A B)
 MIC=""; MIC_DESC=""; MIC_MISSING=""; DAUDIO=on; SCREEN=""; SCREEN_MISSING=""
+CAPTURE=screen   # screen | region | window
+AX=0; AY=0; AW=0; AH=0; AREA_LABEL=""; PICK_PID=""
 DEVS=(); DEVNAMES=(); MICS=(); MICDESC=(); MONS=()
 MODE=move; SEL=0; REC=0; REC_START=0; CLEANED=0; SAVED=0; MSG=""; PROMPT=""
 SCR=form; ROW=0; STTY=""; MON=""; MX=0; MY=0; MW=0; MH=0; IN_ALT=0
@@ -284,30 +286,33 @@ load_config() {
       MIC_DESC) MIC_DESC=$v ;;
       DESKTOP_AUDIO) [[ $v == on || $v == off ]] && DAUDIO=$v ;;
       SCREEN) SCREEN=$v ;;
+      CAPTURE) [[ $v == screen || $v == region || $v == window ]] && CAPTURE=$v ;;
     esac
   done <"$CONF"
+  for id in "${CAMS[@]}"; do C[$id.rx0]=${C[$id.rx]}; C[$id.ry0]=${C[$id.ry]}; C[$id.size0]=${C[$id.size]}; done
 }
 
 save_config() {
   ((SAVED)) && return 0
   [[ -n ${C[A.shape]:-} ]] || return 0
   mkdir -p "$CONF_DIR" || return 0
-  local id dev name mic desc scr
+  local id dev name mic desc scr rx ry
   {
     for id in "${CAMS[@]}"; do
       dev=${C[$id.dev]}; name=${C[$id.name]}
       if [[ -z $dev && -n ${C[$id.missing]} ]]; then dev=${C[$id.sdev]}; name=${C[$id.sname]}; fi  # B5: saknad enhet behålls
       printf 'CAM_%s_DEV=%s\nCAM_%s_NAME=%s\nCAM_%s_SHAPE=%s\nCAM_%s_RING=%s\nCAM_%s_COLOR=%s\nCAM_%s_THICK=%s\nCAM_%s_BG=%s\nCAM_%s_SIZE=%s\n' \
         "$id" "$dev" "$id" "$name" "$id" "${C[$id.shape]}" "$id" "${C[$id.ring]}" "$id" "${C[$id.color]}" \
-        "$id" "${C[$id.thick]}" "$id" "${C[$id.bg]}" "$id" "${C[$id.size]}"
-      [[ -n ${C[$id.rx]} ]] && printf 'CAM_%s_RX=%s\nCAM_%s_RY=%s\n' "$id" "${C[$id.rx]}" "$id" "${C[$id.ry]}"
+        "$id" "${C[$id.thick]}" "$id" "${C[$id.bg]}" "$id" "$([[ $CAPTURE == screen ]] && echo "${C[$id.size]}" || echo "${C[$id.size0]}")"
+      if [[ $CAPTURE == screen ]]; then rx=${C[$id.rx]}; ry=${C[$id.ry]}; else rx=${C[$id.rx0]}; ry=${C[$id.ry0]}; fi   # positioner i delområde sparas inte
+      [[ -n $rx ]] && printf 'CAM_%s_RX=%s\nCAM_%s_RY=%s\n' "$id" "$rx" "$id" "$ry"
     done
     mic=$MIC; desc=$MIC_DESC
     [[ $mic == __default__ ]] && mic=""
     if [[ -n $MIC_MISSING ]]; then mic=$MIC_MISSING; fi
     printf 'MIC=%s\nMIC_DESC=%s\nDESKTOP_AUDIO=%s\n' "$mic" "$desc" "$DAUDIO"
     scr=$SCREEN; [[ -n $SCREEN_MISSING ]] && scr=$SCREEN_MISSING
-    printf 'SCREEN=%s\n' "$scr"
+    printf 'SCREEN=%s\nCAPTURE=%s\n' "$scr" "$CAPTURE"
   } >"$CONF.tmp" && mv "$CONF.tmp" "$CONF"
   SAVED=1
 }
@@ -573,10 +578,46 @@ stop_cam() { # stänger en kamera (egna PID:er + klass)
   save_pids
 }
 
+pick_area() { # kör Omarchys väljare; sätter AX AY AW AH AREA_LABEL. 0 = vald, 1 = avbrutet/ogiltigt (MSG satt)
+  local mode=region out rc g c
+  [[ $CAPTURE == window ]] && mode=windows
+  if [[ $CAPTURE == window ]]; then MSG="Väljaren är öppen: välj fönster (Tab/pilar + Enter, Esc avbryter)"
+  else MSG="Väljaren är öppen: dra ett område med musen (Esc avbryter)"; fi
+  $DRAW 2>/dev/null
+  rm -f "$RUN/pick.out"
+  setsid omarchy-capture-region "$mode" >"$RUN/pick.out" 2>/dev/null </dev/null &
+  PICK_PID=$!
+  wait "$PICK_PID"; rc=$?
+  PICK_PID=""
+  flush_input
+  out=$(head -1 "$RUN/pick.out" 2>/dev/null); rm -f "$RUN/pick.out"
+  if ((rc != 0)) || [[ ! $out =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$ ]]; then
+    MSG="Valet avbröts - ingen inspelning startad."; return 1
+  fi
+  g=("${BASH_REMATCH[@]}")
+  if ((g[3] < 200 || g[4] < 200)); then MSG="Området är för litet (minst 200x200 px)."; return 1; fi
+  AX=${g[1]}; AY=${g[2]}; AW=${g[3]}; AH=${g[4]}
+  AREA_LABEL=""
+  if [[ $CAPTURE == window ]]; then
+    c=$(hyprctl clients -j 2>/dev/null | jq -r --argjson x "$AX" --argjson y "$AY" --argjson w "$AW" --argjson h "$AH" \
+      'first(.[]|select(.at[0]==$x and .at[1]==$y and .size[0]==$w and .size[1]==$h)|"\(.class) - \(.title)") // empty' | cut -c1-50)
+    AREA_LABEL="Fönster: ${c:-okänt} ${AW}x${AH} @ $AX,$AY"
+  else
+    AREA_LABEL="Område ${AW}x${AH} @ $AX,$AY"
+  fi
+  return 0
+}
+
+apply_area() { MX=$AX; MY=$AY; MW=$AW; MH=$AH; }
+
 start_preview() {
   local id
   mkdir -p "$RUN"; : >"$RUN/pids"
   load_geom || { MSG="Hittade inte skärmen."; return 1; }
+  if [[ $CAPTURE != screen ]]; then   # kamerorna ska ligga INNANFÖR det inspelade området
+    apply_area
+    for id in "${CAMS[@]}"; do C[$id.rx]=""; C[$id.ry]=""; done
+  fi
   default_layout
   for id in "${CAMS[@]}"; do cam_active "$id" && launch_cam "$id"; done
   for id in "${CAMS[@]}"; do
@@ -603,7 +644,7 @@ tui_address() { # fönstret vars pid är en förfader till den här processen (t
 }
 
 start_recording() {
-  local args=(--fullscreen) prev_win="" prev_mon="" fm moved=0
+  local args=() prev_win="" prev_mon="" fm moved=0 shim=0
   if gsr_running; then MSG="En annan inspelning pågår redan - avbryter."; return 1; fi
   [[ -n $MIC ]] && args+=(--with-microphone-audio)
   [[ $DAUDIO == on ]] && args+=(--with-desktop-audio)
@@ -613,7 +654,17 @@ start_recording() {
     pactl set-default-source "$MIC" >/dev/null 2>&1
   fi
   fm=$(focused_monitor)
-  if [[ -n $SCREEN && $SCREEN != "$fm" ]]; then   # --fullscreen spelar in den fokuserade skärmen
+  if [[ $CAPTURE != screen ]]; then
+    # utan --fullscreen anropar Omarchy `omarchy-capture-region smart --match-monitor`; en shim först i PATH
+    # (bara för det här anropet) svarar med det valda området så att Omarchys egen start/stopp/slutbehandling används
+    mkdir -p "$RUN/shim"
+    printf '#!/bin/bash\necho "%s,%s %sx%s"\n' "$AX" "$AY" "$AW" "$AH" >"$RUN/shim/omarchy-capture-region"
+    chmod +x "$RUN/shim/omarchy-capture-region"
+    shim=1
+  else
+    args+=(--fullscreen)
+  fi
+  if [[ $CAPTURE == screen && -n $SCREEN && $SCREEN != "$fm" ]]; then   # --fullscreen spelar in den fokuserade skärmen
     prev_mon=$fm
     prev_win=$TUI_ADDR
     [[ -z $prev_win ]] && prev_win=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
@@ -622,10 +673,15 @@ start_recording() {
   fi
   [[ -n ${MULTICAM_OUTPUT_DIR:-} ]] && export OMARCHY_SCREENRECORD_DIR=$MULTICAM_OUTPUT_DIR
   rm -rf "$RUN/result" "$RUN/finish.lock" "$RUN/stop.lock"
-  omarchy-capture-screenrecording "${args[@]}" >/dev/null 2>&1 &
+  if ((shim)); then
+    PATH="$RUN/shim:$PATH" omarchy-capture-screenrecording "${args[@]}" >/dev/null 2>&1 &
+  else
+    omarchy-capture-screenrecording "${args[@]}" >/dev/null 2>&1 &
+  fi
   START_PID=$!
   wait "$START_PID"
   START_PID=""
+  rm -rf "$RUN/shim"
   if ((moved)); then   # återställ fokus: först skärmen, sedan TUI-fönstret om det är känt
     [[ -n $prev_mon ]] && hc dispatch "hl.dsp.focus({ monitor = \"$prev_mon\" })"
     [[ -n $prev_win ]] && hc dispatch "hl.dsp.focus({ window = \"address:$prev_win\" })"
@@ -690,7 +746,7 @@ build_rows() {
       bg_installed && { RT+=(bg); RI+=("$id"); }
     fi
   done
-  RT+=(mic daudio screen start); RI+=("" "" "" "")
+  RT+=(mic daudio capture screen start); RI+=("" "" "" "" "")
 }
 
 cam_label() { local n; n=${C[$1.name]}; echo "${n:-av}"; }
@@ -720,15 +776,26 @@ draw_form() {
         [[ -n $MIC_MISSING ]] && val+="   $(printf '\e[33m')⚠ saknas: $MIC_MISSING$(printf '\e[0m')"
         ;;
       daudio) label="Skrivbordsljud"; [[ $DAUDIO == on ]] && val="[x] på" || val="[ ] av" ;;
+      capture)
+        label="Spela in"
+        case $CAPTURE in
+          screen) val="● hel skärm   ○ område   ○ fönster" ;;
+          region) val="○ hel skärm   ● område   ○ fönster   (väljs med musen när du trycker F5)" ;;
+          window) val="○ hel skärm   ○ område   ● fönster   (väljs med Tab/pilar + Enter vid F5)" ;;
+        esac
+        ;;
       screen)
         label="Skärm"
         if [[ -z $SCREEN ]]; then val="fokuserad ($(focused_monitor))"; else val=$SCREEN; fi
         [[ -n $SCREEN_MISSING ]] && val+="   $(printf '\e[33m')⚠ saknas: $SCREEN_MISSING$(printf '\e[0m')"
+        [[ $CAPTURE != screen ]] && val="$val   (används bara för hel skärm)"
         ;;
       start) label=""; val="▶ Förhandsvisa kameror (inspelningen startar inte än)" ;;
     esac
     if [[ $t == start ]]; then line=" $val"; else printf -v line ' %-18s %s' "$label" "$val"; fi
-    if ((i == ROW)); then printf '\e[2K\e[7m%s\e[0m\n' "$line"; else printf '\e[2K%s\n' "$line"; fi
+    if ((i == ROW)); then printf '\e[2K\e[7m%s\e[0m\n' "$line"
+    elif [[ $t == screen && $CAPTURE != screen ]]; then printf '\e[2K\e[2m%s\e[0m\n' "$line"
+    else printf '\e[2K%s\n' "$line"; fi
   done
   printf '\e[2K\n'
   gsr_running && printf '\e[2K\e[33m Obs: en inspelning pågår redan - starta inte en ny.\e[0m\n'
@@ -776,6 +843,12 @@ form_change() { # delta ±1
       MIC=${opts[$idx]}; MIC_DESC=${optn[$idx]}; MIC_MISSING=""
       ;;
     daudio) [[ $DAUDIO == on ]] && DAUDIO=off || DAUDIO=on ;;
+    capture)
+      local order=(screen region window)
+      idx=0
+      for i in 0 1 2; do [[ ${order[$i]} == "$CAPTURE" ]] && idx=$i; done
+      CAPTURE=${order[$(cycle_idx 3 "$idx" "$d")]}
+      ;;
     screen)
       opts=("")
       for i in "${!MONS[@]}"; do opts+=("${MONS[$i]%%$'\t'*}"); done
@@ -856,7 +929,8 @@ draw_run() {
   else
     state=$(printf '\e[1;33m○ FÖRHANDSVISNING – ställ in kamerorna\e[0m  (Enter = starta inspelning)')
   fi
-  printf '\e[2K multicam  %s\n\e[2K\n' "$state"
+  printf '\e[2K multicam  %s\n' "$state"
+  if [[ $CAPTURE == screen ]]; then printf '\e[2K Hel skärm: %s\n' "$MON"; else printf '\e[2K %s\n' "$AREA_LABEL"; fi
   for i in "${!CAMS[@]}"; do
     id=${CAMS[$i]}
     cam_active "$id" || continue
@@ -871,7 +945,7 @@ draw_run() {
   printf '\e[2K Läge: %s   Vald kamera: %s\n' "$([[ $MODE == move ]] && echo '[FLYTTA]' || echo '[STORLEK]')" "${CAMS[$SEL]}"
   printf '\e[2K\n'
   printf '\e[2K %s\n' "${PROMPT:-$MSG}"
-  printf '\e[2K\e[2m Tab kamera  ↑↓←→ flytta/storlek (Shift = stort)  m läge  +/- PgUp/PgDn storlek  1-9 position\e[0m\n'
+  printf '\e[2K\e[2m Tab kamera  ↑↓←→ flytta/storlek (Shift = stort)  m läge  +/- PgUp/PgDn storlek  1-9 position  o nytt område\e[0m\n'
   printf '\e[2K\e[2m s form  r ring  c/C färg  p nästa färg  [ ] tjocklek  b bakgrund  q avsluta\e[0m\n'
   printf '\e[J'
 }
@@ -920,6 +994,13 @@ run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
       $'\t') SEL=$(((SEL + 1) % 2)); cam_active "${CAMS[$SEL]}" || SEL=$(((SEL + 1) % 2)) ;;
       $'\e[Z') SEL=$(((SEL + 1) % 2)); cam_active "${CAMS[$SEL]}" || SEL=$(((SEL + 1) % 2)) ;;
       m) [[ $MODE == move ]] && MODE=size || MODE=move ;;
+      o)
+        if [[ $CAPTURE == screen ]]; then MSG="'o' gäller bara läget område/fönster."
+        elif ((REC)); then MSG="Området kan inte ändras under inspelning."
+        elif pick_area; then
+          apply_area
+          for k in A B; do cam_active "$k" && { clamp_cam "$k"; apply_cam "$k"; }; done
+        fi ;;
       q | $'\e')
         if ((REC)); then
           if confirm "Stoppa inspelningen och avsluta?"; then
@@ -1007,6 +1088,7 @@ cleanup() {
   touch "$RUN/quit" 2>/dev/null          # låter vakten ta över om vi skulle hänga
   # hängd terminal: skriv inget mer dit (EIO/SIGPIPE får inte avbryta städningen)
   ((HUPPED)) && exec >/dev/null 2>&1
+  if [[ -n $PICK_PID ]]; then kill -TERM -- "-$PICK_PID" 2>/dev/null || kill -TERM "$PICK_PID" 2>/dev/null; fi
   if [[ -n $START_PID ]]; then      # avbruten under start: invänta startskriptet, ta över ansvaret
     wait "$START_PID" 2>/dev/null
     if gsr_running && [[ -s $PTR ]]; then cp "$PTR" "$RUN/recfile"; REC=1; fi
@@ -1067,7 +1149,9 @@ main() {
   list_devices; list_mics; list_monitors
   resolve_saved
   printf '\e[?1049h\e[?25l'; IN_ALT=1
-  if form_loop; then
+  while form_loop; do
+    DRAW=draw_form
+    if [[ $CAPTURE != screen ]] && ! pick_area; then continue; fi   # avbrutet val: tillbaka till formuläret
     if start_preview; then
       flush_input   # tangenter som trycktes medan kamerorna öppnades får inte starta inspelningen
       if run_loop; then
@@ -1076,7 +1160,8 @@ main() {
     else
       printf '\e[H\e[J %s\n' "$MSG"; sleep 2
     fi
-  fi
+    break
+  done
   exit 0
 }
 main
