@@ -53,7 +53,7 @@ Removes everything above, the keybind line and the add-on. Your recordings are n
 
 1. Form: choose camera A / B (each "av" or a device; the same device cannot be used twice), shape, ring,
    ring colour and thickness, microphone, desktop audio and screen. Press `F5` (or Enter on the last row).
-2. Preview: the cameras appear and are placed. Arrange them, then press `Enter` to start recording.
+2. Preview: the cameras appear and are placed, nothing is recorded yet. Arrange them, then press `Enter` to start recording.
 3. While recording the same keys work. `q`/`Esc` asks for confirmation, stops, shows the file name and
    offers to open it in omacut.
 
@@ -95,7 +95,7 @@ Preview / recording screen
 | `c` / `C` | colour picker / hex input |
 | `[` `]` | ring thickness 1-12 px (default 4) |
 | `b` | background removal on / off (add-on) |
-| `Enter` / `F5` | start recording (from preview) |
+| `Enter` | start recording (from preview; F5 does not start it) |
 | `q`, `Esc` | stop (asks first) and quit |
 
 Deviation from the spec: the spec uses ← / → for the preset colours, but on the recording screen the

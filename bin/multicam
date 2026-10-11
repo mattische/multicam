@@ -20,7 +20,7 @@ RUNBASE=${XDG_RUNTIME_DIR:-/tmp}/multicam
 RUN=$RUNBASE   # byts till en sessionskatalog ($RUNBASE/s.<pid>) när TUI:t startar
 PTR=/tmp/omarchy-screenrecord-filename
 LOGF=${MULTICAM_LOG:-}
-RV=MC2_   # Lua-namn på fönsterreglerna; höj versionen när regeln ändras (gamla regler ligger kvar i Hyprland tills omstart)
+RV=MC3_   # Lua-namn på fönsterreglerna; höj versionen när regeln ändras (gamla regler ligger kvar i Hyprland tills omstart)
 
 log() { [[ -n $LOGF ]] && printf '%(%T)T %s\n' -1 "$*" >>"$LOGF"; return 0; }
 hc() { hyprctl "$@" >/dev/null 2>&1; }
@@ -524,7 +524,7 @@ wait_mapped() { local i; for i in $(seq 60); do win_mapped "$1" && return 0; sle
 
 ensure_rule() {
   local id=$1
-  hc eval "if $RV$id == nil then $RV$id = hl.window_rule({name=\"multicam-$RV$id\", match={class=\"^Multicam$id\$\"}, tag=\"-default-opacity\", opacity=\"1 1\", float=true, pin=true, no_initial_focus=true, border_size=0, no_dim=true, size={300,300}}) else $RV$id:set_enabled(true) end"
+  hc eval "if $RV$id == nil then $RV$id = hl.window_rule({name=\"multicam-$RV$id\", match={class=\"^Multicam$id\$\"}, tag=\"-default-opacity\", opacity=\"1 1\", float=true, pin=true, no_initial_focus=true, no_anim=true, border_size=0, no_dim=true, size={300,300}}) else $RV$id:set_enabled(true) end"
 }
 
 launch_cam() {
@@ -653,6 +653,7 @@ stop_recording() { # blockerar tills Omarchys slutbehandling är klar och filen 
 # Terminal / ritning
 ###############################################################################
 KEY=""
+flush_input() { local k; while IFS= read -rsn1 -t 0.05 k; do :; done; return 0; }
 read_key() { # 0 = tangent i KEY, 1 = EOF, 2 = timeout
   local k c rc
   KEY=""
@@ -724,7 +725,7 @@ draw_form() {
         if [[ -z $SCREEN ]]; then val="fokuserad ($(focused_monitor))"; else val=$SCREEN; fi
         [[ -n $SCREEN_MISSING ]] && val+="   $(printf '\e[33m')⚠ saknas: $SCREEN_MISSING$(printf '\e[0m')"
         ;;
-      start) label=""; val="▶ Förhandsvisa kameror och starta" ;;
+      start) label=""; val="▶ Förhandsvisa kameror (inspelningen startar inte än)" ;;
     esac
     if [[ $t == start ]]; then line=" $val"; else printf -v line ' %-18s %s' "$label" "$val"; fi
     if ((i == ROW)); then printf '\e[2K\e[7m%s\e[0m\n' "$line"; else printf '\e[2K%s\n' "$line"; fi
@@ -853,7 +854,7 @@ draw_run() {
   if ((REC)); then
     state=$(printf '\e[1;31m● SPELAR IN %s\e[0m' "$(fmt_time $((now - REC_START)))")
   else
-    state=$(printf '\e[1;33m○ FÖRHANDSVISNING\e[0m  (Enter = starta inspelning)')
+    state=$(printf '\e[1;33m○ FÖRHANDSVISNING – ställ in kamerorna\e[0m  (Enter = starta inspelning)')
   fi
   printf '\e[2K multicam  %s\n\e[2K\n' "$state"
   for i in "${!CAMS[@]}"; do
@@ -929,7 +930,7 @@ run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
             return 0
           fi
         else return 1; fi ;;
-      ENTER | $'\e[15~')
+      ENTER)   # bara Enter startar; F5 har redan använts för förhandsvisningen
         if ((!REC)); then
           MSG="Startar inspelning..."; draw_run
           start_recording && MSG=""
@@ -1068,6 +1069,7 @@ main() {
   printf '\e[?1049h\e[?25l'; IN_ALT=1
   if form_loop; then
     if start_preview; then
+      flush_input   # tangenter som trycktes medan kamerorna öppnades får inte starta inspelningen
       if run_loop; then
         ((${#RESULT_FILE})) && result_screen "$RESULT_FILE"
       fi

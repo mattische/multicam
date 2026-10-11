@@ -28,7 +28,7 @@
     <text x="60" y="456"> Mikrofon           Audient iD14</text>
     <text x="60" y="484"> Skrivbordsljud     [x] på</text>
     <text x="60" y="512"> Skärm              fokuserad (DP-1)</text>
-    <text x="60" y="540" fill="#9ece6a"> ▶ Förhandsvisa kameror och starta</text>
+    <text x="60" y="540" fill="#9ece6a"> ▶ Förhandsvisa kameror (inspelningen startar inte än)</text>
 
     <text x="60" y="572" font-size="14" fill="#565f89"> ↑↓ rad   ←→ ändra   Enter växla/välj   C hexkod   c färgväljare   F5 förhandsvisa   q avsluta</text>
   </g>
