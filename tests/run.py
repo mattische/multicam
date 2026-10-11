@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Automatiska tester för multicam. Kör: tests/run.py [T-ID ...]  (utan argument: alla utom bg)
-Skärmdumpar sparas i $SCRATCH/evidence/ (de granskade bevisbilderna i docs/test-evidence/ kommer från tests/visual.py). Rapport skrivs som JSON till $SCRATCH/results.json."""
+Skärmdumpar sparas i $SCRATCH/evidence/ (checkas aldrig in: de visar kamerabild och skärm). Rapport skrivs som JSON till $SCRATCH/results.json."""
 import sys, glob, stat
 from mclib import *
 
-EVID = os.path.join(SCRATCH, 'evidence')   # skriv aldrig över de granskade bilderna i docs/test-evidence/
+EVID = os.path.join(SCRATCH, 'evidence')   # utanför repot: bilderna visar kamerabild och skärm
 os.makedirs(EVID, exist_ok=True)
 os.makedirs(SCRATCH, exist_ok=True)
 R = Report()

@@ -5,8 +5,8 @@ Testkod: `tests/run.py` + `tests/mclib.py` (automatiska) och `tests/visual.py` (
 Inspelningar skrevs till `/tmp/claude-1000/multicam-tests/` via `MULTICAM_OUTPUT_DIR` och raderades.
 
 Version 2 av rapporten: efter oberoende verifiering fixades sex buggar (se nedan) och testerna skärptes. Skärmen var låst under
-första körningen; den låstes sedan upp och de visuella testerna kördes på riktigt (bilderna i `docs/test-evidence/` är granskade).
-Obs: bilderna innehåller användarens webbkamerabild och skärminnehåll vid testögonblicket (privat repo).
+första körningen; den låstes sedan upp och de visuella testerna kördes på riktigt (bilderna granskades och beskrivs nedan).
+Bevisbilderna visar användarens webbkamerabild och skärm, så de ligger inte i repot (bara lokalt i `/tmp/claude-1000/multicam-tests/evidence/` vid testkörning). Bilderna under `docs/images/` är illustrationer.
 
 ## Buggfixar (verifieringsrunda)
 1. `install.sh`: lägger radbrytning före genvägsraden; `uninstall` tar bort bara bind-raden även om den smält ihop med en kommentar. Test T-A4.
@@ -33,7 +33,7 @@ Obs: bilderna innehåller användarens webbkamerabild och skärminnehåll vid te
 | T-B4 | GODKÄND | form/ring/färg/tjocklek sparas och förifylls vid omstart |
 | T-B5 | GODKÄND | saknad kamera: `av   ⚠ saknas: Obefintlig Kamera 9000`, ingen tyst ersättning, enheten bevaras i config |
 | T-B5b | GODKÄND | två "Twin Cam" (video4/video6, stub av `omarchy-capture-webcam-list`): A=video6 och B=video4 bevaras exakt, ingen sammanslagning |
-| T-C1 | GODKÄND (granskad bild) | `docs/test-evidence/c1-frame-0.2s.png`: ffmpeg-bildruta vid 0,2 s i inspelningen visar skrivbordet med båda kamerorna redan på plats: rund bild (C920) med rosa ring till vänster och rektangulär bild (FaceTime) med blå ring i mitten |
+| T-C1 | GODKÄND (granskad bild) | `evidence/c1-frame-0.2s.png`: ffmpeg-bildruta vid 0,2 s i inspelningen visar skrivbordet med båda kamerorna redan på plats: rund bild (C920) med rosa ring till vänster och rektangulär bild (FaceTime) med blå ring i mitten |
 | T-C3 | GODKÄND | `pactl get-default-source`: före=Generic USB, under=C920-mic, efter=Generic USB |
 | T-C3v | GODKÄND | ffmpeg volumedetect mean_volume per vald mic (5 s var): C920 -16,0 dB, Generic USB -83,3 dB, iD14 -91,0 dB; default-source under inspelning var vald mic i alla tre. Skillnad C920/Generic = 67 dB |
 | T-C4 | GODKÄND | ffprobe: h264+aac, mp4; längd 7,90 s mot uppmätt tid från Omarchys pekarfil till att inspelaren avslutats 8,14 s minus 0,1 s trim = 8,04 s (±0,5 s); två körningar, båda godkända |

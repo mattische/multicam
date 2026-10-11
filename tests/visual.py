@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Visuella tester (kräver upplåst skärm; en människa/agent måste titta på PNG-filerna i docs/test-evidence/).
+"""Visuella tester (kräver upplåst skärm; en människa/agent måste titta på PNG-filerna i $SCRATCH/evidence/; de checkas aldrig in eftersom de visar kamerabild och skärm).
 Kör: tests/visual.py [shapes|record|bg|tui]. Skriver nedskalade PNG:er och skriver ut vad som sparats."""
 import sys
 from mclib import *
 
-E = os.path.join(REPO, 'docs', 'test-evidence') + '/'
+E = os.path.join(SCRATCH, 'evidence') + '/'
+os.makedirs(E, exist_ok=True)
 
 
 def crop_save(name, g, margin=20, width=320):
