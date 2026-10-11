@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1200 430" width="1200" height="430" font-family="JetBrainsMono Nerd Font, JetBrains Mono, DejaVu Sans Mono, monospace">
+  <defs>
+    <symbol id="cam" viewBox="0 0 100 100">
+      <clipPath id="camclip"><circle cx="50" cy="50" r="50"/></clipPath>
+      <g clip-path="url(#camclip)">
+      <circle cx="50" cy="50" r="50" fill="#3b4261"/>
+      <path d="M14 100 C18 74 34 66 50 66 C66 66 82 74 86 100Z" fill="#2ac3de"/>
+      <circle cx="50" cy="44" r="18" fill="#f2c29e"/>
+      <path d="M32 42 C30 22 48 20 52 21 C66 22 72 32 68 44 C64 34 58 31 50 31 C42 31 36 34 32 42Z" fill="#4a2f22"/>
+      </g>
+    </symbol>
+        <marker id="ah" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10Z" fill="#e0af68"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="430" fill="#1a1b26"/>
+
+  <!-- panel 1: move -->
+  <g transform="translate(30,30)">
+    <rect width="360" height="300" rx="10" fill="#16161e" stroke="#414868" stroke-width="2"/>
+    <rect width="360" height="16" rx="8" fill="#13131a"/>
+    <circle cx="120" cy="190" r="58" fill="none" stroke="#ff3399" stroke-width="3" stroke-dasharray="7 7" opacity="0.45"/>
+    <line x1="160" y1="170" x2="212" y2="132" stroke="#e0af68" stroke-width="5" marker-end="url(#ah)"/>
+    <circle cx="250" cy="110" r="62" fill="#ff3399"/>
+    <use href="#cam" x="192" y="52" width="116" height="116"/>
+    <text x="20" y="282" font-size="22" fill="#e0af68" font-weight="bold">[FLYTTA]</text>
+  </g>
+  <text x="30" y="372" font-size="18" fill="#c0caf5">←↑↓→  flytta 20 px</text>
+  <text x="30" y="400" font-size="18" fill="#a9b1d6">Shift + pil  100 px</text>
+
+  <!-- panel 2: size -->
+  <g transform="translate(420,30)">
+    <rect width="360" height="300" rx="10" fill="#16161e" stroke="#414868" stroke-width="2"/>
+    <rect width="360" height="16" rx="8" fill="#13131a"/>
+    <circle cx="180" cy="152" r="112" fill="#ff3399"/>
+    <use href="#cam" x="72" y="44" width="216" height="216"/>
+    <circle cx="180" cy="152" r="62" fill="none" stroke="#e0af68" stroke-width="3" stroke-dasharray="7 7"/>
+    <line x1="232" y1="100" x2="258" y2="74" stroke="#e0af68" stroke-width="5" marker-end="url(#ah)"/>
+    <line x1="128" y1="204" x2="102" y2="230" stroke="#e0af68" stroke-width="5" marker-end="url(#ah)"/>
+    <text x="20" y="282" font-size="22" fill="#e0af68" font-weight="bold">[STORLEK]</text>
+  </g>
+  <text x="420" y="372" font-size="18" fill="#c0caf5">↑→ större   ↓← mindre  (±10 %)</text>
+  <text x="420" y="400" font-size="18" fill="#a9b1d6">m byter läge · +/- alltid</text>
+
+  <!-- panel 3: numpad snap -->
+  <g transform="translate(810,30)">
+    <rect width="360" height="300" rx="10" fill="#16161e" stroke="#414868" stroke-width="2"/>
+    <rect width="360" height="16" rx="8" fill="#13131a"/>
+    <g font-size="20" font-weight="bold" text-anchor="middle">
+      <g fill="#24283b" stroke="#414868" stroke-width="2">
+        <rect x="18" y="32" width="40" height="40" rx="7"/><rect x="160" y="32" width="40" height="40" rx="7"/><rect x="302" y="32" width="40" height="40" rx="7"/>
+        <rect x="18" y="138" width="40" height="40" rx="7"/><rect x="160" y="138" width="40" height="40" rx="7"/><rect x="302" y="138" width="40" height="40" rx="7"/>
+        <rect x="18" y="244" width="40" height="40" rx="7"/><rect x="160" y="244" width="40" height="40" rx="7"/>
+      </g>
+      <g fill="#c0caf5">
+        <text x="38" y="59">7</text><text x="180" y="59">8</text><text x="322" y="59">9</text>
+        <text x="38" y="165">4</text><text x="180" y="165">5</text><text x="322" y="165">6</text>
+        <text x="38" y="271">1</text><text x="180" y="271">2</text>
+      </g>
+    </g>
+    <circle cx="292" cy="234" r="54" fill="#ff3399"/>
+    <use href="#cam" x="242" y="184" width="100" height="100"/>
+    <rect x="320" y="262" width="34" height="32" rx="7" fill="#e0af68"/>
+    <text x="337" y="285" font-size="20" font-weight="bold" fill="#1a1b26" text-anchor="middle">3</text>
+  </g>
+  <text x="810" y="372" font-size="18" fill="#c0caf5">1–9  snappa till hörn, kant, mitt</text>
+  <text x="810" y="400" font-size="18" fill="#a9b1d6">Tab  byt kamera (A / B)</text>
+</svg>

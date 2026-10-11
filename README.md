@@ -6,6 +6,10 @@ Cameras are floating windows (rectangle or circle, optional coloured ring) that 
 resize with the keyboard. Recording is done by Omarchy's own `omarchy-capture-screenrecording`;
 multicam only replaces its `--with-webcam` part. The UI text is Swedish.
 
+![multicam recording: code editor with a round and a rectangular camera overlay and the multicam TUI](docs/images/overview.svg)
+
+<sub>Illustrations, not screenshots.</sub>
+
 ## Requirements
 
 Required: `hyprctl`, `jq`, `mpv`, `pactl`, `gpu-screen-recorder`, `omarchy-capture-screenrecording`,
@@ -45,6 +49,8 @@ Removes everything above, the keybind line and the add-on. Your recordings are n
 
 ## Usage
 
+![The multicam form](docs/images/form.svg)
+
 1. Form: choose camera A / B (each "av" or a device; the same device cannot be used twice), shape, ring,
    ring colour and thickness, microphone, desktop audio and screen. Press `F5` (or Enter on the last row).
 2. Preview: the cameras appear and are placed. Arrange them, then press `Enter` to start recording.
@@ -58,6 +64,8 @@ The selected microphone is set as default source only while recording and always
 "Screen" defaults to the focused monitor.
 
 ### Keys
+
+![Move mode, size mode and numpad snapping](docs/images/controls.svg)
 
 Form screen
 
