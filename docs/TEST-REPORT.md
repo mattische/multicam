@@ -36,7 +36,7 @@ Obs: bilderna innehåller användarens webbkamerabild och skärminnehåll vid te
 | T-C1 | GODKÄND (granskad bild) | `docs/test-evidence/c1-frame-0.2s.png`: ffmpeg-bildruta vid 0,2 s i inspelningen visar skrivbordet med båda kamerorna redan på plats: rund bild (C920) med rosa ring till vänster och rektangulär bild (FaceTime) med blå ring i mitten |
 | T-C3 | GODKÄND | `pactl get-default-source`: före=Generic USB, under=C920-mic, efter=Generic USB |
 | T-C3v | GODKÄND | ffmpeg volumedetect mean_volume per vald mic (5 s var): C920 -16,0 dB, Generic USB -83,3 dB, iD14 -91,0 dB; default-source under inspelning var vald mic i alla tre. Skillnad C920/Generic = 67 dB |
-| T-C4 | GODKÄND | ffprobe: h264+aac, mp4; längd 7,70 s mot uppmätt recorder-start->stopp 7,59 s minus 0,1 s trim = 7,49 s (±0,5 s) |
+| T-C4 | GODKÄND | ffprobe: h264+aac, mp4; längd 7,90 s mot uppmätt tid från Omarchys pekarfil till att inspelaren avslutats 8,14 s minus 0,1 s trim = 8,04 s (±0,5 s); två körningar, båda godkända |
 | T-C4b | GODKÄND | namn matchar regex; Omarchys `_`/`-`-namn finns inte kvar; förskapad krockfil orörd, ny fick `-2`, Omarchys namn borta ur katalogen |
 | T-C5 | MANUELL | resultatskärmen visar filnamn + "Öppna i omacut? [J/n]" (visat i pty); start av omacut ej körd |
 | T-D1 | GODKÄND (granskade bilder) | `d1-circle-ring-red8.png`: rund kamerabild med jämn röd ring (8 px) som följer cirkeln; `d1-rect-ring-green8.png`: 16:9-rektangel med grön ring längs kanten; `d1-circle-noring.png`: rund bild utan ring (kanten klippt rund mot terminalen bakom) |
@@ -74,3 +74,8 @@ Obs: bilderna innehåller användarens webbkamerabild och skärminnehåll vid te
 - Öppning av omacut från resultatskärmen (T-C5).
 - Äkta Omarchy WebcamOverlay parallellt (kameran upptagen; stand-in användes).
 - Terminaler andra än foot; kamerafps i bra ljus (C920 gav 15 fps p.g.a. dynamisk bildfrekvens i svagt ljus).
+
+## Samordnarens kontroll (efter agenternas körningar)
+- Skärmdumparna granskades: kamerabilderna var svagt genomskinliga eftersom Omarchys standardregel ger alla fönster opacitet 0,985/0,96. Rättat: fönsterregeln tar bort taggen `default-opacity` och sätter `opacity = "1 1"` (samma som Omarchys egen WebcamOverlay). Verifierat med ett svart testfönster: pixeln mitt i fönstret är exakt (0,0,0). Regelns Lua-namn versioneras (`MC2_A`), så en redan laddad äldre regel i en körande Hyprland-session inte återanvänds.
+- T-C4 mätte tidigare från fel ögonblick (stoppet sker först vid bekräftelsen `j`). Nu mäts från Omarchys pekarfil till att inspelaren avslutats.
+- Omkörda efter rättningarna: T-E1, T-E2 (Ctrl+C 0,06 s, HUP 0,46 s, TERM 0,51 s, utifrån 0,20 s), T-D3/4, T-D5, T-X1, T-X2, T-C3, T-C4, T-C4b: alla godkända.

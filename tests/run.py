@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Automatiska tester för multicam. Kör: tests/run.py [T-ID ...]  (utan argument: alla utom bg)
-Skärmdumpar sparas i docs/test-evidence/. Rapport skrivs som JSON till $SCRATCH/results.json."""
+Skärmdumpar sparas i $SCRATCH/evidence/ (de granskade bevisbilderna i docs/test-evidence/ kommer från tests/visual.py). Rapport skrivs som JSON till $SCRATCH/results.json."""
 import sys, glob, stat
 from mclib import *
 
-EVID = os.path.join(REPO, 'docs', 'test-evidence')
+EVID = os.path.join(SCRATCH, 'evidence')   # skriv aldrig över de granskade bilderna i docs/test-evidence/
 os.makedirs(EVID, exist_ok=True)
 os.makedirs(SCRATCH, exist_ok=True)
 R = Report()
@@ -465,6 +465,8 @@ def t_d8():
 
 
 # ---------------------------------------------------------------- E
+
+
 def start_recording(s, tmo=20):
     start_to_preview(s)
     s.send(ENTER, 0.3)
@@ -484,12 +486,12 @@ def t_record_main():
         start_recording(s)
         during = default_source()
         rec_ptr = open('/tmp/omarchy-screenrecord-filename').read().strip()
-        t_start = os.stat('/tmp/omarchy-screenrecord-filename').st_mtime   # filen finns, inspelningen har börjat
+        t_start = os.stat('/tmp/omarchy-screenrecord-filename').st_mtime   # Omarchy bekräftar att inspelningen går
         time.sleep(7)
-        pass
         s.send('q', 0.3)
-        t_stop = time.time()
-        s.send('j', 0.3)
+        s.send('j', 0)
+        wait_until(lambda: not gsr_pids(), 10, 0.02)
+        t_stop = time.time()   # när gpu-screen-recorder avslutades
         expect(s.wait_for('klar', 25), s.screen())
         after = default_source()
         files = sorted(os.listdir(o))
@@ -504,7 +506,7 @@ def t_record_main():
         R.add('T-C3', 'GODKÄND' if (during == MIC_C920 and after == before) else 'UNDERKÄND',
               f'pactl get-default-source: före={before} under={during} efter={after} (förväntat under: {MIC_C920}); ljudström i filen: {"audio" in codecs} (volymmätning av vald källa ej gjord: se rapport)')
         R.add('T-C4', 'GODKÄND' if (codecs.get('video') == 'h264' and codecs.get('audio') == 'aac' and 'mp4' in j['format']['format_name'] and abs(dur - (t_stop - t_start - 0.1)) <= 0.5) else 'UNDERKÄND',
-              f'ffprobe: {codecs} format={j["format"]["format_name"]} längd={dur:.2f}s; uppmätt tid recorder-start->stopp {t_stop - t_start:.2f}s minus Omarchys 0,1 s trim = {t_stop - t_start - 0.1:.2f}s (tolerans ±0,5 s)')
+              f'ffprobe: {codecs} format={j["format"]["format_name"]} längd={dur:.2f}s; uppmätt tid start (Omarchys pekarfil)->inspelaren avslutad {t_stop - t_start:.2f}s minus Omarchys 0,1 s trim = {t_stop - t_start - 0.1:.2f}s (tolerans ±0,5 s)')
         rx = r'^screenrecording-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{2}_[0-9]{2}\.mp4$'
         ok = re.match(rx, mp4[0]) and not any(re.match(r'screenrecording-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.mp4', x) for x in files)
         R.add('T-C4b(namn)', 'GODKÄND' if ok else 'UNDERKÄND', f'filer i utmappen: {files}; Omarchys ursprungsnamn ({os.path.basename(rec_ptr)}) borta')
