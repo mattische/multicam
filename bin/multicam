@@ -166,7 +166,7 @@ EOT
   if [[ ! -x $BG_PY ]]; then
     python3 -m venv "$BG_DIR/venv" || { echo "Kunde inte skapa Python-miljö."; return 1; }
   fi
-  "$BG_DIR/venv/bin/pip" install --quiet --disable-pip-version-check onnxruntime numpy ||
+  "$BG_DIR/venv/bin/pip" install --quiet --no-cache-dir --disable-pip-version-check onnxruntime numpy ||
     { echo "pip-installationen misslyckades."; return 1; }
   if ! bg_verify; then
     echo "Laddar ner modell..."
@@ -473,7 +473,7 @@ launch_cam() {
     PP[$id]=$!
     setsid mpv "$fifo" --demuxer=rawvideo --demuxer-rawvideo-w="$w" --demuxer-rawvideo-h="$h" \
       --demuxer-rawvideo-mp-format=rgba --demuxer-rawvideo-fps=30 --profile=low-latency --untimed --no-cache \
-      --vo=gpu-next --background=color --background-color='#00000000' --alpha=yes "${common[@]}" &>/dev/null &
+      --vo=gpu-next --background=color --background-color='#00000000' "${common[@]}" &>/dev/null &
     CP[$id]=$!
   else
     [[ ${C[$id.bg]} == on ]] && MSG="Bakgrund bort: tillägget saknas eller modellen är ogiltig - visar vanlig kamera."
@@ -924,6 +924,7 @@ cleanup() {
     REC=0
   fi
   [[ $(cat "$RUN/tui.pid" 2>/dev/null) == "$$" ]] && rm -f "$RUN/tui.pid"
+  gsr_running || rm -rf "$RUN/result" "$RUN/recfile" "$RUN/recording" "$RUN/finish.lock" "$RUN/pids"
   if ((IN_ALT)); then printf '\e[?25h\e[?1049l'; fi
   [[ -n $STTY ]] && stty "$STTY" 2>/dev/null
 }

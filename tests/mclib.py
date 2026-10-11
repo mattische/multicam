@@ -59,9 +59,19 @@ def default_source():
 
 
 def own_mpv_for_multicam():
-    """mpv-processer vars kommandorad har titeln Multicam (bara våra)."""
-    out = sh("pgrep -af '^mpv .*Multicam' ; pgrep -af 'lib/bg.py'").stdout
-    return [l for l in out.splitlines() if 'pgrep' not in l]
+    """mpv-processer med wayland-app-id=Multicam* samt bg.py (bara multicams egna)."""
+    out = []
+    for pid in os.listdir('/proc'):
+        if not pid.isdigit():
+            continue
+        try:
+            comm = open(f'/proc/{pid}/comm').read().strip()
+            cmd = open(f'/proc/{pid}/cmdline').read().replace('\0', ' ')
+        except OSError:
+            continue
+        if (comm == 'mpv' and 'wayland-app-id=Multicam' in cmd) or (comm.startswith('python') and 'lib/bg.py' in cmd):
+            out.append(f'{pid} {cmd[:80]}')
+    return out
 
 
 def rules_enabled():
