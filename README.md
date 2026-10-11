@@ -16,6 +16,14 @@ Nothing is ever installed with root or through the package manager.
 
 ## Install
 
+The repository is private; you need `gh`/ssh access to `mattische/multicam`:
+
+```
+git clone git@github.com:mattische/multicam.git && cd multicam && ./install.sh
+```
+
+Options:
+
 ```
 ./install.sh            # asks whether to add the optional keybind
 ./install.sh --yes      # no questions, no keybind
@@ -87,6 +95,11 @@ arrows move/resize. There the presets are on `p` / `P`; on the form screen ← /
 
 Sizes: a circle is a square of the given size; a rectangle is 16:9 where the size is the height. Minimum
 120 px, maximum the screen height. Cameras are always kept inside the screen.
+
+Runtime files (PIDs, FIFOs, state) live in `$XDG_RUNTIME_DIR/multicam/` and vanish on logout.
+Camera windows use 1280x720 (MJPEG when the device supports it at 30 fps), or 640x360/640x480 as fallback;
+with background removal 640x360 is preferred to save CPU. Note that webcams with dynamic frame rate drop
+to 15 fps in dim light regardless of format.
 
 Cleanup: closing the terminal, Ctrl+C, `q`, stopping from outside (Alt+Print, click on the bar icon,
 `omarchy-capture-screenrecording --stop-recording`) or killing `gpu-screen-recorder` all close the camera

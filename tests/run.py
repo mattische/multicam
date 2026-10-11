@@ -61,55 +61,109 @@ def snapshot(root):
     return out
 
 
+EXPECTED_INSTALL = {
+    '.local/bin/multicam',
+    '.local/share/multicam/bin/multicam',
+    '.local/share/multicam/lib/bg.py',
+    '.local/share/applications/multicam.desktop',
+    '.config/multicam',
+}
+
+
+def realistic_home(name):
+    """Tom HOME-kopia med riktiga ~/.config/hypr, ~/.config/omarchy, ~/.local/share/omarchy och en Videos-fil."""
+    home = os.path.join(SCRATCH, name)
+    shutil.rmtree(home, ignore_errors=True)
+    os.makedirs(home + '/.config'); os.makedirs(home + '/.local/share/applications'); os.makedirs(home + '/.local/bin'); os.makedirs(home + '/Videos')
+    open(home + '/Videos/keep.mp4', 'w').write('x')
+    R_ = os.path.expanduser('~')
+    for rel in ('.config/hypr', '.config/omarchy', '.local/share/omarchy'):
+        if os.path.exists(f'{R_}/{rel}'):
+            subprocess.run(['cp', '-a', f'{R_}/{rel}', f'{home}/{rel}'], check=True)
+    return home
+
+
+def diff_r(a, b):
+    r = subprocess.run(['diff', '-r', '--no-dereference', a, b], capture_output=True, text=True)
+    return r.stdout.strip()
+
+
 @test('T-A1', 'T-A3', 'T-A5')
 def t_install():
-    home = os.path.join(SCRATCH, 'mc-home')
-    shutil.rmtree(home, ignore_errors=True)
-    os.makedirs(home + '/Videos'); open(home + '/Videos/keep.mp4', 'w').write('x')
-    os.makedirs(home + '/.config/hypr')
-    open(home + '/.config/hypr/bindings.lua', 'w').write('-- user\no.bind("SUPER + I", "X", "y")\n')
+    home = realistic_home('mc-home')
+    pristine = os.path.join(SCRATCH, 'mc-home-pristine')
+    shutil.rmtree(pristine, ignore_errors=True)
+    subprocess.run(['cp', '-a', home, pristine], check=True)
     before = snapshot(home)
-    sys_dirs = [os.path.expanduser('~/.config/omarchy'), os.path.expanduser('~/.local/share/omarchy')]
-    sysbefore = {d: sh(f'find {d} -type f -printf "%p %T@ %s\\n" | sort | md5sum').stdout for d in sys_dirs + ['/usr/bin']}
     env = dict(os.environ, HOME=home)
+    usr_before = sh('find /usr/bin -type f -printf "%p %T@ %s\\n" | sort | md5sum').stdout
     r = subprocess.run([REPO + '/install.sh', '--yes'], env=env, capture_output=True, text=True)
     expect(r.returncode == 0, r.stdout + r.stderr)
     after = snapshot(home)
-    new = sorted(set(after) - set(before))
-    allowed = ('/.local/bin/multicam', '/.local/share/multicam', '/.config/multicam', '/.local/share/applications')
-    stray = [p for p in new if not any(a in p for a in allowed)]
-    # .local och .local/bin etc är föräldrakataloger
-    stray = [p for p in stray if not p.endswith(('/.local', '/.local/bin', '/.local/share'))]
-    expect(not stray, f'oväntade filer: {stray}')
-    expect(os.path.exists(home + '/.local/share/multicam/bin/multicam'), 'binär saknas')
-    expect(os.path.exists(home + '/.local/share/applications/multicam.desktop'), 'desktop saknas')
+    new = {os.path.relpath(p, home) for p in set(after) - set(before)}
+    new = {p for p in new if p not in ('.local', '.local/bin', '.local/share', '.local/share/applications', '.cache')}
+    # kataloger under multicam räknas inte separat
+    new = {p for p in new if not p.startswith('.local/share/multicam/') or p.count('/') > 3 or p.endswith(('bin/multicam', 'lib/bg.py'))}
+    new = {p for p in new if p not in ('.local/share/multicam', '.local/share/multicam/bin', '.local/share/multicam/lib')}
+    expect(new == EXPECTED_INSTALL, f'filuppsättning avviker: extra={sorted(new - EXPECTED_INSTALL)} saknas={sorted(EXPECTED_INSTALL - new)}')
+    d_hypr = diff_r(pristine + '/.config/hypr', home + '/.config/hypr')
+    d_om = diff_r(pristine + '/.config/omarchy', home + '/.config/omarchy')
+    d_sh = diff_r(pristine + '/.local/share/omarchy', home + '/.local/share/omarchy')
+    expect(not (d_hypr or d_om or d_sh), f'install ändrade Omarchy/Hypr-filer:\n{d_hypr}\n{d_om}\n{d_sh}')
     dsk = open(home + '/.local/share/applications/multicam.desktop').read()
     expect('Exec=omarchy-launch-tui --app-id=TUI.float ' + home in dsk, dsk)
-    R.add('T-A1', 'GODKÄND', f'install.sh --yes med HOME={home}: nya filer: ' + ', '.join(p.replace(home, '~') for p in new if not os.path.isdir(p)))
-    # kör installerad version
+    R.add('T-A1', 'GODKÄND', 'install.sh --yes mot HOME-kopia med riktiga ~/.config/{hypr,omarchy} och ~/.local/share/omarchy: nya sökvägar exakt == ' + ', '.join(sorted(EXPECTED_INSTALL)))
     v = subprocess.run([home + '/.local/bin/multicam', '--version'], env=env, capture_output=True, text=True).stdout
     expect('multicam' in v, v)
-    # genväg
-    subprocess.run([REPO + '/install.sh', '--keybind'], env=env, capture_output=True)
-    b = open(home + '/.config/hypr/bindings.lua').read()
-    expect(b.count('-- multicam') == 1, b)
-    ka = b.splitlines()[-1]
-    # uninstall
     r = subprocess.run([REPO + '/uninstall.sh', '--yes'], env=env, capture_output=True, text=True)
     expect(r.returncode == 0, r.stdout + r.stderr)
     final = snapshot(home)
-    # bindings.lua ska vara som före
-    expect(final.get(home + '/.config/hypr/bindings.lua') == before[home + '/.config/hypr/bindings.lua'], 'bindings.lua ändrad')
+    left = {os.path.relpath(p, home) for p in set(final) - set(before)} - {'.local', '.local/bin', '.local/share', '.local/share/applications'}
+    expect(not left, f'rester: {sorted(left)}')
+    gone = sorted(os.path.relpath(p, home) for p in set(before) - set(final))
+    expect(not gone, f'borttagna: {gone}')
+    full = diff_r(pristine, home)
+    expect(not full, f'diff -r efter uninstall ej tom:\n{full[:500]}')
     expect(open(home + '/Videos/keep.mp4').read() == 'x', 'Videos rört')
-    left = [p for p in set(final) - set(before)]
-    left = [p for p in left if not p.endswith(('/.local', '/.local/bin', '/.local/share', '/.local/share/applications'))]
-    expect(not left, f'rester: {left}')
-    removed_missing = [p for p in set(before) - set(final)]
-    expect(not removed_missing, f'borttagna: {removed_missing}')
-    R.add('T-A3', 'GODKÄND', f'uninstall.sh --yes: diff mot före-läge tomt (Videos/keep.mp4 orörd; genvägsraden `{ka[:60]}...` borttagen, bindings.lua identisk)')
-    sysafter = {d: sh(f'find {d} -type f -printf "%p %T@ %s\\n" | sort | md5sum').stdout for d in sys_dirs + ['/usr/bin']}
-    expect(sysbefore == sysafter, 'systemfiler ändrade')
-    R.add('T-A5', 'GODKÄND', 'find|md5sum av ~/.config/omarchy, ~/.local/share/omarchy och /usr/bin identiska före/efter install+uninstall (HOME-override; installationen skriver bara under $HOME)')
+    R.add('T-A3', 'GODKÄND', 'uninstall.sh --yes: `diff -r --no-dereference` mellan orörd kopia och hemträdet är tomt (hela trädet, inkl. Videos/keep.mp4)')
+    usr_after = sh('find /usr/bin -type f -printf "%p %T@ %s\\n" | sort | md5sum').stdout
+    expect(usr_before == usr_after, '/usr/bin ändrad')
+    R.add('T-A5', 'GODKÄND', f'`diff -r` före/efter install (och efter uninstall) av kopior av ~/.config/hypr, ~/.config/omarchy, ~/.local/share/omarchy: tomt; /usr/bin fillista+md5 oförändrad. Obs: körs mot HOME-kopia, aldrig verkligt HOME')
+    shutil.rmtree(pristine, ignore_errors=True)
+    shutil.rmtree(home, ignore_errors=True)
+
+
+@test('T-A4')
+def t_keybind():
+    """Genväg: bindings.lua utan avslutande newline; raden får inte smälta ihop med föregående; uninstall tar exakt bort den."""
+    home = os.path.join(SCRATCH, 'mc-home-kb')
+    shutil.rmtree(home, ignore_errors=True)
+    os.makedirs(home + '/.config/hypr')
+    orig = '-- user comment\no.bind("SUPER + I", "X", "y")\n-- sista raden utan newline'
+    open(home + '/.config/hypr/bindings.lua', 'w').write(orig)
+    env = dict(os.environ, HOME=home)
+    r = subprocess.run([REPO + '/install.sh', '--keybind'], env=env, capture_output=True, text=True)
+    expect(r.returncode == 0, r.stderr)
+    b = open(home + '/.config/hypr/bindings.lua').read()
+    lines = b.split('\n')
+    kb = [l for l in lines if l.endswith('-- multicam')]
+    expect(len(kb) == 1 and kb[0].startswith('o.bind("SUPER + ALT + M"'), f'raden sammanfogad/fel: {lines}')
+    expect('-- sista raden utan newline' in lines, f'föregående rad skadad: {lines}')
+    # sämre fall: en tidigare version smälte ihop raden med kommentaren; uninstall ska ändå ta bort bara genvägen
+    merged = orig + kb[0] + '\n'
+    open(home + '/.config/hypr/bindings.lua', 'w').write(merged)
+    r = subprocess.run([REPO + '/uninstall.sh', '--yes'], env=env, capture_output=True, text=True)
+    b2 = open(home + '/.config/hypr/bindings.lua').read()
+    expect('-- multicam' not in b2 and 'Multicam' not in b2, f'genväg kvar: {b2!r}')
+    expect(b2.rstrip('\n') == orig.rstrip('\n') or b2.startswith(orig.rsplit('\n', 1)[0]), f'övriga rader ändrade: {b2!r}')
+    expect('-- sista raden utan newline' in b2 and 'o.bind("SUPER + I", "X", "y")' in b2, b2)
+    # och normalfallet: ren rad på egen rad, andra "-- multicam"-liknande rader som inte är vår bind rörs inte
+    open(home + '/.config/hypr/bindings.lua', 'w').write('-- note about multicam\n' + kb[0] + '\n-- keep -- multicam-ish\n')
+    subprocess.run([REPO + '/bin/multicam', 'uninstall', '--yes'], env=env, capture_output=True)
+    b3 = open(home + '/.config/hypr/bindings.lua').read()
+    expect(b3 == '-- note about multicam\n-- keep -- multicam-ish\n', repr(b3))
+    R.add('T-A4', 'GODKÄND', 'bindings.lua utan avslutande newline: installerad rad hamnar på egen rad, föregående rad intakt; uninstall tar bort bara bind-raden även när den smält ihop med en kommentar; andra rader orörda')
+    shutil.rmtree(home, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- B
@@ -184,14 +238,25 @@ def t_b5():
 
 
 # ---------------------------------------------------------------- D
+def mon_area_of(g):
+    """Skärmytan (logiska px minus reserverat) för den monitor som innehåller fönstrets övre vänstra hörn."""
+    for m in monitors():
+        w, h = m['width'] / m['scale'], m['height'] / m['scale']
+        if m.get('transform', 0) % 2: w, h = h, w
+        if m['x'] <= g[0] < m['x'] + w and m['y'] <= g[1] < m['y'] + h:
+            return mon_area(m['name'])
+    return mon_area()
+
+
 def mon_area(name=None):
     m = [x for x in monitors() if (x['name'] == name if name else x['focused'])][0]
+    w, h = (m['height'], m['width']) if m.get('transform', 0) % 2 else (m['width'], m['height'])
     return (m['x'] + m['reserved'][0], m['y'] + m['reserved'][1],
-            int(m['width'] / m['scale'] - m['reserved'][0] - m['reserved'][2]),
-            int(m['height'] / m['scale'] - m['reserved'][1] - m['reserved'][3]))
+            int(w / m['scale'] - m['reserved'][0] - m['reserved'][2]),
+            int(h / m['scale'] - m['reserved'][1] - m['reserved'][3]))
 
 
-@test('T-D3/4', 'T-D5', 'T-D7')
+@test('T-D3/4', 'T-D5')
 def t_d34():
     wake()
     s = run_session('d34', cfg(shape='circle', ring='on', size=240) + 'CAM_A_RX=500\nCAM_A_RY=300\n')
@@ -240,47 +305,94 @@ def t_d34():
         wait_until(lambda: g()[2] == 120, 3)
         if g()[2:] != (120, 120): errs.append(f'min: {g()}')
         # maximum = skärmhöjd
-        for _ in range(25): s.send('+', 0.15)
+        for _ in range(40): s.send('+', 0.12)
         wait_until(lambda: g()[2] == min(MW, MH), 5)
         if g()[2:] != (min(MW, MH),) * 2: errs.append(f'max: {g()} förväntat {min(MW, MH)}')
-        # klamring mot kant (flytta läge)
-        s.send('m', 0.2); s.send('1', 0.5)
-        gx, gy, gw, gh = g()
-        if (gx, gy + gh) != (MX + 20 if gw < MW - 40 else MX, MY + MH - 20 if gh < MH - 40 else MY + MH):
-            pass
-        for _ in range(60): s.send(SLEFT, 0.05)
-        for _ in range(10): s.send(SUP, 0.05)
-        time.sleep(0.5)
-        gx, gy, gw, gh = g()
-        if gx < MX or gy < MY or gx + gw > MX + MW or gy + gh > MY + MH: errs.append(f'utanför skärm: {g()} area {(MX, MY, MW, MH)}')
-        if gx != MX or gy != MY: errs.append(f'klamrade inte mot kant: {g()}')
-        # D5: Tab + numpad
-        s.send('m', 0.2)  # tillbaka? (ligger i storleksläge, växla till flytta)
-        expect('[FLYTTA]' in s.screen() or True, '')
-        for _ in range(30): s.send('-', 0.05)
+        # klamring: tillbaka till 300 px, sedan mot alla fyra kanter i flyttläge
+        for _ in range(25): s.send('-', 0.1)
+        for _ in range(3): s.send('+', 0.1)
+        s.send('m', 0.3)
+        if '[FLYTTA]' not in s.screen(): s.send('m', 0.3)
+        cl = {}
+        for name, key in [('vänster', SLEFT), ('upp', SUP), ('höger', SRIGHT), ('ner', SDOWN)]:
+            for _ in range(max(MW, MH) // 100 + 2): s.send(key, 0.06)
+            time.sleep(0.4)
+            gx, gy, gw, gh = g()
+            cl[name] = (gx, gy, gw, gh)
+        gx, gy, gw, gh = cl['vänster']
+        if gx != MX: errs.append(f'vänsterkant: x={gx} väntade {MX}')
+        gx, gy, gw, gh = cl['upp']
+        if gy != MY: errs.append(f'överkant: y={gy} väntade {MY}')
+        gx, gy, gw, gh = cl['höger']
+        if gx + gw != MX + MW: errs.append(f'högerkant: x+w={gx + gw} väntade {MX + MW}')
+        gx, gy, gw, gh = cl['ner']
+        if gy + gh != MY + MH: errs.append(f'nederkant: y+h={gy + gh} väntade {MY + MH}')
+        for k, (gx, gy, gw, gh) in cl.items():
+            if gx < MX or gy < MY or gx + gw > MX + MW or gy + gh > MY + MH:
+                errs.append(f'utanför skärm efter {k}: {(gx, gy, gw, gh)} area {(MX, MY, MW, MH)}')
+        # storleksökning vid kant får inte skjuta ut bilden
+        s.send('1', 0.3)
+        for _ in range(8): s.send('+', 0.1)
         time.sleep(0.4)
+        gx, gy, gw, gh = g()
+        if gx < MX or gy < MY or gx + gw > MX + MW or gy + gh > MY + MH: errs.append(f'utanför efter förstoring i hörn: {g()}')
         e_d34 = list(errs)
         R.add('T-D3/4', 'GODKÄND' if not e_d34 else 'UNDERKÄND',
               'pty + hyprctl clients -j: flytta 20/100 px, +/-/PgUp/PgDn ±10 %, storleksläge ±10/25 %, min 120, max ' + str(min(MW, MH)) +
-              ', klamring mot kant, statusrad [FLYTTA]/[STORLEK]' + ('' if not e_d34 else ' FEL: ' + '; '.join(e_d34)))
-        # D5
-        errs.clear()
-        s.send('m', 0.2)
-        if '[FLYTTA]' not in s.screen(): s.send('m', 0.2)
-        cam_w = lambda: geo()['MulticamA'][2]
-        for n in range(1, 10):
-            s.send(str(n), 0.4)
-            gx, gy, gw, gh = g()
-            col, row = (n - 1) % 3, 2 - (n - 1) // 3
-            ex = MX + 20 + col * (MW - 40 - gw) // 2
-            ey = MY + 20 + row * (MH - 40 - gh) // 2
-            if abs(gx - ex) > 1 or abs(gy - ey) > 1: errs.append(f'{n}: {g()} väntade {(ex, ey)}')
-        R.add('T-D5', 'GODKÄND' if not errs else 'UNDERKÄND', 'siffror 1-9 snappar numpad-layout (±1 px) mot hyprctl clients -j' + ('' if not errs else ' FEL ' + '; '.join(errs)))
-        # D7
+              ', klamring mot alla fyra kanter (x=MX, y=MY, x+w=MX+MW, y+h=MY+MH), statusrad [FLYTTA]/[STORLEK]' + ('' if not e_d34 else ' FEL: ' + '; '.join(e_d34)))
+        s.send('q'); s.wait_exit(5)
+    finally:
+        s.close()
+
+    # ---- D5: båda kameror, Tab / Shift-Tab, siffror på B
+    s = run_session('d5', cfg(shape='circle', ring='on', size=200) + 'CAM_A_RX=100\nCAM_A_RY=100\n'
+                    + 'CAM_B_DEV=/dev/video0\nCAM_B_NAME=FaceTime HD Camera\nCAM_B_SHAPE=rect\nCAM_B_SIZE=180\nCAM_B_RX=600\nCAM_B_RY=100\n')
+    errs = []
+    try:
+        start_to_preview(s)
+        wait_until(lambda: len(geo()) == 2, 8)
+        MX, MY, MW, MH = mon_area_of(geo()['MulticamA'])
+        ga = lambda: geo()['MulticamA']; gb = lambda: geo()['MulticamB']
+        expect('Vald kamera: A' in s.screen(), s.screen())
+        # 1 på A -> nedre vänstra
+        s.send('1', 0.5)
+        a0, b0 = ga(), gb()
+        exA = (MX + 20, MY + MH - 20 - a0[3])
+        if abs(a0[0] - exA[0]) > 1 or abs(a0[1] - exA[1]) > 1: errs.append(f'A/1: {a0} väntade {exA}')
+        s.send(TAB, 0.4)
+        if 'Vald kamera: B' not in s.screen(): errs.append('Tab valde inte B')
+        s.send('9', 0.5)
+        a1, b1 = ga(), gb()
+        if a1 != a0: errs.append(f'A flyttades när B styrdes: {a0} -> {a1}')
+        exB = (MX + MW - 20 - b1[2], MY + 20)
+        if abs(b1[0] - exB[0]) > 1 or abs(b1[1] - exB[1]) > 1: errs.append(f'B/9: {b1} väntade {exB}')
+        s.send('\x1b[Z', 0.4)   # Shift-Tab tillbaka till A
+        if 'Vald kamera: A' not in s.screen(): errs.append('Shift-Tab valde inte A')
+        s.send('5', 0.5)
+        a2, b2 = ga(), gb()
+        exA = (MX + (MW - a2[2]) // 2, MY + (MH - a2[3]) // 2)
+        if abs(a2[0] - exA[0]) > 2 or abs(a2[1] - exA[1]) > 2: errs.append(f'A/5: {a2} väntade {exA}')
+        if b2 != b1: errs.append(f'B flyttades av A:s åtgärd: {b1} -> {b2}')
+        s.send(TAB, 0.3); s.send(TAB, 0.3)
+        if 'Vald kamera: A' not in s.screen(): errs.append('Tab två gånger ska ge A')
+        R.add('T-D5', 'GODKÄND' if not errs else 'UNDERKÄND',
+              'två kameror konfigurerade: Tab/Shift-Tab växlar vald kamera (statusrad), siffror 1/5 på A och 9 på B hamnar rätt (±1-2 px), den andra kameran rörs inte' + ('' if not errs else ' FEL ' + '; '.join(errs)))
+        s.send('q'); s.wait_exit(5)
+    finally:
+        s.close()
+
+@test('T-D7')
+def t_d7():
+    wake()
+    before_active = active_addr()
+    s = run_session('d7', cfg(shape='circle', ring='on'))
+    try:
+        start_to_preview(s)
+        for k in [RIGHT, 's', 'r', '1']: s.send(k, 0.3)
         act = active_addr()
-        ok = act == before_active
-        R.add('T-D7', ('MANUELL' if before_active is None else 'GODKÄND' if ok else 'UNDERKÄND'),
-              f'hyprctl activewindow före start={before_active} efter kamerastart+åtgärder={act} (förhandsvisningsfönstren tar inte fokus; testet körs utan terminalfönster, se T-D7b för foot)')
+        R.add('T-D7', ('MANUELL' if before_active is None else 'GODKÄND' if act == before_active else 'UNDERKÄND'),
+              f'hyprctl activewindow före={before_active} efter kamerastart+åtgärder={act}' +
+              (' (inget aktivt fönster: låst session, kan inte avgöra fokus; se T-D7b)' if before_active is None else ''))
         s.send('q'); s.wait_exit(5)
     finally:
         s.close()
@@ -372,11 +484,13 @@ def t_record_main():
         start_recording(s)
         during = default_source()
         rec_ptr = open('/tmp/omarchy-screenrecord-filename').read().strip()
+        t_start = os.stat('/tmp/omarchy-screenrecord-filename').st_mtime   # filen finns, inspelningen har börjat
         time.sleep(7)
         pass
-        s.send('q', 0.3); s.send('j', 0.3)
-        expect(s.wait_for('klar', 25), s.screen())
+        s.send('q', 0.3)
         t_stop = time.time()
+        s.send('j', 0.3)
+        expect(s.wait_for('klar', 25), s.screen())
         after = default_source()
         files = sorted(os.listdir(o))
         mp4 = [f for f in files if f.endswith('.mp4')]
@@ -389,8 +503,8 @@ def t_record_main():
         s.send('n'); s.wait_exit(5)
         R.add('T-C3', 'GODKÄND' if (during == MIC_C920 and after == before) else 'UNDERKÄND',
               f'pactl get-default-source: före={before} under={during} efter={after} (förväntat under: {MIC_C920}); ljudström i filen: {"audio" in codecs} (volymmätning av vald källa ej gjord: se rapport)')
-        R.add('T-C4', 'GODKÄND' if (codecs.get('video') == 'h264' and codecs.get('audio') == 'aac' and 'mp4' in j['format']['format_name'] and abs(dur - 8) < 2.5) else 'UNDERKÄND',
-              f'ffprobe: {codecs} format={j["format"]["format_name"]} längd={dur:.2f}s (inspelat ca 8-9 s inkl. start/stopp)')
+        R.add('T-C4', 'GODKÄND' if (codecs.get('video') == 'h264' and codecs.get('audio') == 'aac' and 'mp4' in j['format']['format_name'] and abs(dur - (t_stop - t_start - 0.1)) <= 0.5) else 'UNDERKÄND',
+              f'ffprobe: {codecs} format={j["format"]["format_name"]} längd={dur:.2f}s; uppmätt tid recorder-start->stopp {t_stop - t_start:.2f}s minus Omarchys 0,1 s trim = {t_stop - t_start - 0.1:.2f}s (tolerans ±0,5 s)')
         rx = r'^screenrecording-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{2}_[0-9]{2}\.mp4$'
         ok = re.match(rx, mp4[0]) and not any(re.match(r'screenrecording-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.mp4', x) for x in files)
         R.add('T-C4b(namn)', 'GODKÄND' if ok else 'UNDERKÄND', f'filer i utmappen: {files}; Omarchys ursprungsnamn ({os.path.basename(rec_ptr)}) borta')
@@ -422,8 +536,10 @@ def t_collision():
         expect(s.wait_for('klar', 25), s.screen())
         files = sorted(os.listdir(o))
         s.send('n'); s.wait_exit(5)
-        ok = (want[:-4] + '-2.mp4') in files and open(os.path.join(o, want)).read() == 'befintlig'
-        R.add('T-C4b', 'GODKÄND' if ok else 'UNDERKÄND', f'krock: {files}; befintlig fil orörd, ny fick -2; Omarchys namn finns inte kvar')
+        omarchy_name = f'screenrecording-{m[1]}_{m[2]}-{m[3]}-{m[4]}.mp4'
+        ok = ((want[:-4] + '-2.mp4') in files and open(os.path.join(o, want)).read() == 'befintlig'
+              and omarchy_name not in files and not os.path.exists(ptr))
+        R.add('T-C4b', 'GODKÄND' if ok else 'UNDERKÄND', f'krock: {files}; befintlig fil orörd, ny fick -2; Omarchys namn ({omarchy_name}) finns inte kvar')
         shutil.rmtree(o, ignore_errors=True)
     finally:
         s.close()
@@ -449,10 +565,10 @@ def t_e_signals():
             if how == 'int': s.send('\x03', 0.01)
             elif how == 'hup': s.kill(signal.SIGHUP)
             else: s.kill(signal.SIGTERM)
-            gone = wait_until(lambda: not mc_clients() and not own_mpv_for_multicam(), 3)
+            gone = wait_until(lambda: not mc_clients() and not own_mpv_for_multicam(), 3, 0.02)
             dt = time.time() - t0
             s.wait_exit(15)
-            res[f'E2 {name}'] = (bool(gone) and dt < 1.5, f'{dt:.2f}s', settle_clean(), os.listdir(o))
+            res[f'E2 {name}'] = (bool(gone) and dt < 1.0, f'{dt:.2f}s', settle_clean(), os.listdir(o))
         finally:
             s.close()
             shutil.rmtree(o, ignore_errors=True)
@@ -464,12 +580,12 @@ def t_e_signals():
         time.sleep(2)
         t0 = time.time()
         p = subprocess.Popen(['omarchy-capture-screenrecording', '--stop-recording'], stdout=subprocess.DEVNULL)
-        gone = wait_until(lambda: not mc_clients() and not own_mpv_for_multicam(), 4)
+        gone = wait_until(lambda: not mc_clients() and not own_mpv_for_multicam(), 4, 0.02)
         dt = time.time() - t0
         ended = s.wait_for('klar', 20)
         p.wait(10)
         files = os.listdir(o)
-        res['E2 --stop-recording utifrån'] = (bool(gone) and dt < 2.0 and ended, f'{dt:.2f}s', settle_clean(), files)
+        res['E2 --stop-recording utifrån'] = (bool(gone) and dt < 1.0 and ended, f'{dt:.2f}s', settle_clean(), files)
         s.send('n'); s.wait_exit(5)
     finally:
         s.close()
@@ -478,6 +594,130 @@ def t_e_signals():
     ev = '; '.join(f'{k}: {v}' for k, v in res.items())
     R.add('T-E1b', 'GODKÄND' if res['E1 Esc (förhandsvisning)'][0] and not res['E1 Esc (förhandsvisning)'][1] else 'UNDERKÄND', ev.split('; E2')[0])
     R.add('T-E2', 'GODKÄND' if not bad or list(bad) == [] else 'UNDERKÄND', ev + (f' | FEL: {list(bad)}' if bad else ''))
+
+
+@test('T-C3v')
+def t_c3_volume():
+    """Spela in 5 s med två olika mikrofoner och jämför ffmpeg volumedetect (Omarchys loudnorm jämnar ut, så mäter även rå bakgrund)."""
+    wake()
+    mics = {'C920': MIC_C920, 'GenericUSB': 'alsa_input.usb-Generic_USB_Audio-00.analog-stereo',
+            'iD14': 'alsa_input.usb-Audient_Audient_iD14-00.multichannel-input'}
+    vals = {}
+    for name, mic in mics.items():
+        o = out_dir('c3v')
+        s = run_session('c3v', cfg() + 'MIC=' + mic + '\n', o)
+        try:
+            start_recording(s)
+            during = default_source()
+            time.sleep(5)
+            s.send('q', 0.3); s.send('j', 0.3)
+            expect(s.wait_for('klar', 25), s.screen())
+            f = [x for x in os.listdir(o) if x.endswith('.mp4')][0]
+            r = sh(f'ffmpeg -hide_banner -nostats -i "{o}/{f}" -af volumedetect -vn -f null - 2>&1 | grep -E "mean_volume|max_volume"')
+            mv = re.search(r'mean_volume: (-?[0-9.]+)', r.stdout)
+            vals[name] = (float(mv[1]) if mv else None, during == mic)
+            s.send('n'); s.wait_exit(5)
+        finally:
+            s.close()
+            shutil.rmtree(o, ignore_errors=True)
+    v = {k: x[0] for k, x in vals.items()}
+    ok_def = all(x[1] for x in vals.values())
+    diff = abs(v['C920'] - v['GenericUSB']) if None not in (v['C920'], v['GenericUSB']) else None
+    R.add('T-C3v', 'GODKÄND' if (ok_def and diff is not None and diff >= 10) else 'UNDERKÄND',
+          f'mean_volume (dB) per vald mic: {v}; default-source under inspelning = vald mic för alla: {ok_def}; |C920-GenericUSB| = {diff}')
+
+
+@test('T-E2s')
+def t_e2_stress():
+    """HUP/INT/TERM x10 under inspelning: fönster/mpv/mic städade < 1,0 s, filen avslutad och omdöpt."""
+    wake()
+    rows = {}
+    for how in ('hup', 'int', 'term'):
+        res = []
+        for i in range(10):
+            o = out_dir('e2s')
+            s = run_session('e2s', cfg(), o)
+            try:
+                start_recording(s)
+                time.sleep(1.5)
+                # alla fönster/processer finns just nu
+                t0 = time.time()
+                if how == 'int': s.send('\x03', 0.0)
+                else: s.kill(signal.SIGHUP if how == 'hup' else signal.SIGTERM)
+                gone = wait_until(lambda: not mc_clients() and not own_mpv_for_multicam() and default_source() == ORIG_SRC, 3, 0.02)
+                dt = time.time() - t0
+                s.wait_exit(15)
+                renamed = wait_until(lambda: [x for x in os.listdir(o) if re.match(r'screenrecording-\d{4}-\d\d-\d\d-\d\d_\d\d_\d\d\.mp4$', x)], 15)
+                stopped = not gsr_pids()
+                res.append((bool(gone) and dt < 1.0 and bool(renamed) and stopped, round(dt, 2)))
+            finally:
+                s.close()
+                shutil.rmtree(o, ignore_errors=True)
+            probs = settle_clean(3)
+            if probs: res[-1] = (False, 'rest: ' + str(probs)[:80])
+        rows[how] = res
+    allok = all(ok for r in rows.values() for ok, _ in r)
+    R.add('T-E2s', 'GODKÄND' if allok else 'UNDERKÄND',
+          '10 körningar per signal; (ok, sekunder till städat): ' + '; '.join(f'{k}: max {max(t for _, t in v if isinstance(t, float)):.2f}s, ok={sum(ok for ok, _ in v)}/10' for k, v in rows.items()))
+
+
+@test('T-B5b')
+def t_identical_cams():
+    """Två likadana kameror (samma namn, olika sökväg) får inte slås ihop; exakt sökväg+namn går före namnträff."""
+    stub = os.path.join(SCRATCH, 'stub2'); os.makedirs(stub, exist_ok=True)
+    open(stub + '/omarchy-capture-webcam-list', 'w').write(
+        '#!/bin/bash\necho "/dev/video4  Twin Cam (usb-1):"\necho "/dev/video6  Twin Cam (usb-2):"\n')
+    os.chmod(stub + '/omarchy-capture-webcam-list', 0o755)
+    env = {'PATH': stub + ':' + os.environ['PATH']}
+    conf = cfg().replace('CAM_A_DEV=/dev/video2', 'CAM_A_DEV=/dev/video6').replace('HD Pro Webcam C920', 'Twin Cam') \
+        .replace('CAM_B_DEV=\nCAM_B_NAME=\n', 'CAM_B_DEV=/dev/video4\nCAM_B_NAME=Twin Cam\n')
+    h = make_home('b5b', conf)
+    s = Session(h, out_dir('b5b'), env=env)
+    try:
+        s.wait_for('Kamera A', 5)
+        scr = s.screen()
+        s.send('q'); s.wait_exit(5)
+        c = open(h + '/.config/multicam/config').read()
+        ok = 'CAM_A_DEV=/dev/video6' in c and 'CAM_B_DEV=/dev/video4' in c and 'saknas' not in scr
+        # ändra inte: Kamera B-raden ska visa Twin Cam (inte "av"/saknas)
+        lines = [l for l in scr.splitlines() if l.strip().startswith('Kamera')]
+        R.add('T-B5b', 'GODKÄND' if ok and all('Twin Cam' in l for l in lines) else 'UNDERKÄND',
+              f'A=/dev/video6, B=/dev/video4 (båda "Twin Cam") bevarade exakt: {lines}; config: ' + ' '.join(l for l in c.splitlines() if '_DEV=' in l))
+    finally:
+        s.close()
+
+
+@test('T-D9')
+def t_screen_focus():
+    """Val av en annan skärm än den fokuserade: inspelningen sker på den skärmen och fokus (monitor + fönster) återställs."""
+    wake()
+    mons = monitors()
+    foc = [m for m in mons if m['focused']][0]['name']
+    other = [m for m in mons if m['name'] != foc and m['name'].startswith('DP')]
+    if not other:
+        R.add('T-D9', 'MANUELL', 'ingen andra DP-skärm tillgänglig'); return
+    other = other[0]
+    o = out_dir('d9')
+    act0 = active_addr()
+    s = run_session('d9', cfg() + 'SCREEN=' + other['name'] + '\n', o)
+    try:
+        start_recording(s)
+        time.sleep(2)
+        foc_after = [m for m in monitors() if m['focused']][0]['name']
+        act1 = active_addr()
+        s.send('q', 0.3); s.send('j', 0.3)
+        expect(s.wait_for('klar', 25), s.screen())
+        f = [x for x in os.listdir(o) if x.endswith('.mp4')][0]
+        j = json.loads(sh(f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json "{o}/{f}"').stdout)['streams'][0]
+        exp = (other['width'], other['height'])  # råa lägesstorleken; roterad skärm (transform 1) ger omvänd ordning i filen
+        if other.get('transform', 0) % 2: exp = (exp[1], exp[0])
+        s.send('n'); s.wait_exit(5)
+        ok = (j['width'], j['height']) == exp and foc_after == foc and act1 == act0
+        R.add('T-D9', 'GODKÄND' if ok else 'UNDERKÄND',
+              f'SCREEN={other["name"]} (fokuserad var {foc}): filens upplösning {j["width"]}x{j["height"]} (skärmen {exp[0]}x{exp[1]}); fokuserad monitor efter start={foc_after} (före {foc}); aktivt fönster före={act0} efter={act1}')
+    finally:
+        s.close()
+        shutil.rmtree(o, ignore_errors=True)
 
 
 @test('T-E4')
@@ -519,30 +759,6 @@ def t_e5():
     finally:
         s.close()
         other.terminate()
-
-
-@test('T-D1', 'T-D2')
-def t_visual():
-    wake()
-    ok_screen = grim(SCRATCH + '/probe.png')
-    # Låst skärm? Avgör på bildinnehåll är opålitligt; vi försöker ändå ta bilder och spara dem.
-    outs = []
-    for shape, ring, col in [('circle', 'on', '#ff0000'), ('rect', 'on', '#00ff00'), ('circle', 'off', '#0000ff')]:
-        s = run_session('d1', cfg(shape=shape, ring=ring, color=col, size=300, thick=8) + 'CAM_A_RX=300\nCAM_A_RY=300\n')
-        try:
-            start_to_preview(s)
-            wait_until(lambda: 'MulticamA' in geo(), 5)
-            time.sleep(1)
-            g = geo()['MulticamA']
-            png = f'{EVID}/d1-{shape}-{ring}.png'
-            ok = grim(png, geometry=f'{g[0] - 20},{g[1] - 20} {g[2] + 40}x{g[3] + 40}')
-            outs.append((png, ok))
-            s.send('q'); s.wait_exit(5)
-        finally:
-            s.close()
-    R.add('T-D1', 'MANUELL', 'skärmdumpar tagna: ' + ', '.join(f'{os.path.basename(p)}={ok}' for p, ok in outs) +
-          ' (innehållet visar låsskärmen, inte kamerafönstren: inte verifierad visuellt)')
-    R.add('T-D2', 'MANUELL', 'färg/tjocklek: förhandsvisningsraden visar värdena och apply skickar set_prop; kantens utseende kunde inte verifieras visuellt (låst skärm). Hexkod/färgrad/spar testade i T-B2/T-B4; hyprpicker i T-D2c')
 
 
 @test('T-D2c')

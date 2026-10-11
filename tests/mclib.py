@@ -75,12 +75,27 @@ def own_mpv_for_multicam():
 
 
 def rules_enabled():
-    r = sh("hyprctl rules -j").stdout
+    """hyprctl har inget `rules -j`; sonden är ett eget foot-fönster med klass MulticamA:
+    är multicams regel aktiv blir det flytande + fastnålat (float=true, pin=true). Returnerar lista (tom = inga regler aktiva)."""
+    p = subprocess.Popen(['foot', '--app-id=MulticamA', '-e', 'sleep', '30'], env=hypr_env(),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        rules = json.loads(r)
-    except Exception:
-        return None
-    return [x for x in rules if 'multicam' in json.dumps(x).lower() and x.get('enabled', True)]
+        c = None
+        end = time.time() + 5
+        while time.time() < end and not c:
+            c = [x for x in clients() if x['class'] == 'MulticamA' and x['pid'] == p.pid]
+            time.sleep(0.1)
+        if not c:
+            return None
+        time.sleep(0.2)
+        c = [x for x in clients() if x['class'] == 'MulticamA' and x['pid'] == p.pid][0]
+        return [f'regel aktiv (floating={c["floating"]} pinned={c["pinned"]})'] if (c['floating'] or c['pinned']) else []
+    finally:
+        p.terminate()
+        try:
+            p.wait(3)
+        except Exception:
+            p.kill()
 
 
 def gsr_pids():

@@ -47,6 +47,8 @@ if [[ $kb == yes ]]; then
   elif grep -q "\"$KEYCOMBO\"" "$BINDINGS"; then
     echo "$KEYCOMBO används redan i $BINDINGS - ingen genväg inlagd."
   else
+    # säkerställ radbrytning före vår rad (filen kan sakna avslutande newline)
+    [[ -s $BINDINGS && -n $(tail -c1 "$BINDINGS") ]] && echo >>"$BINDINGS"
     printf 'o.bind("%s", "Multicam", "omarchy-launch-tui --app-id=TUI.float %s") -- multicam\n' "$KEYCOMBO" "$BIN" >>"$BINDINGS"
     echo "Genväg $KEYCOMBO inlagd (raden slutar med '-- multicam')."
   fi
