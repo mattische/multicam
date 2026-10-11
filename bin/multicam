@@ -1,0 +1,966 @@
+#!/bin/bash
+# multicam - tangentbordsstyrd inspelning av skärm + upp till två kameror + mikrofon (Omarchy/Hyprland)
+# Bash. Ändrar inget i /usr eller i Omarchys filer. Se README.md.
+
+VERSION=1.0.0
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+APPDIR=${SELF%/*/*}
+DATA_DIR=$HOME/.local/share/multicam
+CONF_DIR=$HOME/.config/multicam
+CONF=$CONF_DIR/config
+BIN_LINK=$HOME/.local/bin/multicam
+DESKTOP=$HOME/.local/share/applications/multicam.desktop
+BINDINGS=$HOME/.config/hypr/bindings.lua
+BG_DIR=$DATA_DIR/bg
+BG_PY=$BG_DIR/venv/bin/python
+BG_MODEL=$BG_DIR/rvm_mobilenetv3_fp32.onnx
+BG_SHA=88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828
+BG_URL=${MULTICAM_MODEL_URL:-https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx}
+RUN=${XDG_RUNTIME_DIR:-/tmp}/multicam
+PTR=/tmp/omarchy-screenrecord-filename
+LOGF=${MULTICAM_LOG:-}
+
+log() { [[ -n $LOGF ]] && printf '%(%T)T %s\n' -1 "$*" >>"$LOGF"; return 0; }
+hc() { hyprctl "$@" >/dev/null 2>&1; }
+gsr_running() { pgrep -f '^gpu-screen-recorder' >/dev/null; }
+stop_proc_running() { pgrep -f 'bash .*omarchy-capture-screenrecording' >/dev/null; }
+bg_installed() { [[ -x $BG_PY && -f $BG_MODEL ]]; }
+refresh_indicator() { timeout 3 omarchy-shell -q omarchy.indicators refresh >/dev/null 2>&1; return 0; }
+
+###############################################################################
+# Delade städfunktioner (används av TUI och av bakgrundsvakten)
+###############################################################################
+restore_mic() {
+  local f=$RUN/orig_source o
+  mv "$f" "$f.$$" 2>/dev/null || return 0
+  o=$(<"$f.$$"); rm -f "$f.$$"
+  [[ -n $o ]] && pactl set-default-source "$o" >/dev/null 2>&1
+  log "mic restored: $o"
+  return 0
+}
+
+kill_own() { # dödar bara PID:er som multicam själv startat (pids-filen), aldrig efter namn
+  local p c list=()
+  [[ -f $RUN/pids ]] || return 0
+  while read -r p; do
+    [[ $p =~ ^[0-9]+$ ]] || continue
+    c=$(<"/proc/$p/comm") 2>/dev/null || continue
+    case $c in mpv | python* | ffmpeg) list+=("$p") ;; esac
+  done <"$RUN/pids"
+  for p in "${list[@]}"; do kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null; done
+  local i
+  for i in 1 2 3 4 5; do
+    local alive=0
+    for p in "${list[@]}"; do [[ -d /proc/$p ]] && alive=1; done
+    ((alive)) || break
+    sleep 0.1
+  done
+  for p in "${list[@]}"; do
+    if [[ -d /proc/$p ]]; then kill -KILL -- "-$p" 2>/dev/null || kill -KILL "$p" 2>/dev/null; fi
+  done
+  : >"$RUN/pids"
+}
+
+cleanup_windows() { # idempotent: stänger bara klass ^Multicam[AB]$, stänger regler, dödar egna PID:er
+  local id
+  for id in A B; do
+    hc dispatch "hl.dsp.window.close({ window = \"class:^Multicam$id\$\" })"
+    hc eval "if MC_$id then MC_$id:set_enabled(false) end"
+  done
+  kill_own
+  rm -f "$RUN"/bgA.fifo "$RUN"/bgB.fifo
+}
+
+finish_recording() { # väntar in Omarchys slutbehandling och döper om filen (C4). Låsta, idempotent.
+  local src dst d t base n i
+  if ! mkdir "$RUN/finish.lock" 2>/dev/null; then
+    for i in $(seq 300); do [[ -f $RUN/result ]] && return 0; sleep 0.1; done
+    return 1
+  fi
+  # klart = inspelaren borta OCH Omarchys stoppskript färdigt (pekarfilen borta)
+  for i in $(seq 600); do
+    gsr_running && { sleep 0.1; continue; }
+    if [[ -f $PTR ]] && stop_proc_running; then sleep 0.1; continue; fi
+    break
+  done
+  src=$(<"$RUN/recfile") 2>/dev/null
+  if [[ -n $src && -f $src ]]; then
+    base=${src##*/}; d=${src%/*}
+    if [[ $base =~ ^screenrecording-([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})\.mp4$ ]]; then
+      t="screenrecording-${BASH_REMATCH[1]}-${BASH_REMATCH[2]}_${BASH_REMATCH[3]}_${BASH_REMATCH[4]}"
+      dst="$d/$t.mp4"; n=2
+      while [[ -e $dst ]]; do dst="$d/$t-$n.mp4"; n=$((n + 1)); done
+      mv -n "$src" "$dst" && src=$dst
+    fi
+    echo "$src" >"$RUN/result"
+  else
+    echo "FEL" >"$RUN/result"
+  fi
+  log "finish: $(<"$RUN/result")"
+}
+
+###############################################################################
+# Bakgrundsvakt (E4): startas efter att inspelaren bekräftats köra
+###############################################################################
+cmd_watch() {
+  mkdir -p "$RUN"
+  log "watcher up"
+  while gsr_running; do sleep 0.2; done
+  log "watcher: recorder gone"
+  cleanup_windows
+  restore_mic
+  refresh_indicator
+  finish_recording
+  rm -f "$RUN/recording"
+  exit 0
+}
+
+###############################################################################
+# Installation / avinstallation
+###############################################################################
+cmd_uninstall() {
+  local yes=0 a
+  for a in "$@"; do [[ $a == --yes || $a == -y ]] && yes=1; done
+  echo "multicam tar bort:"
+  local items=("$BIN_LINK" "$DATA_DIR" "$CONF_DIR" "$DESKTOP")
+  local it
+  for it in "${items[@]}"; do [[ -e $it || -L $it ]] && echo "  $it"; done
+  grep -q -- '-- multicam$' "$BINDINGS" 2>/dev/null && echo "  raden märkt '-- multicam' i $BINDINGS"
+  echo "Inspelningar i Videos rörs inte."
+  if ((!yes)); then
+    read -r -p "Fortsätta? [j/N] " a
+    [[ $a == [jJyY]* ]] || { echo "Avbrutet."; return 1; }
+  fi
+  [[ -L $BIN_LINK || -f $BIN_LINK ]] && rm -f "$BIN_LINK"
+  rm -rf "$DATA_DIR" "$CONF_DIR"
+  rm -f "$DESKTOP"
+  if [[ -f $BINDINGS ]] && grep -q -- '-- multicam$' "$BINDINGS"; then
+    sed -i --follow-symlinks '/^o\.bind(.*multicam.*-- multicam$/d' "$BINDINGS"
+  fi
+  echo "Klart."
+}
+
+bg_verify() { # 0 = modellen finns och har rätt SHA256
+  local s
+  [[ -f $BG_MODEL ]] || return 1
+  s=$(sha256sum "$BG_MODEL" | cut -d' ' -f1)
+  [[ $s == "$BG_SHA" ]]
+}
+
+cmd_install_bgremove() {
+  local yes=0 a
+  for a in "$@"; do [[ $a == --yes || $a == -y ]] && yes=1; done
+  command -v python3 >/dev/null || { echo "python3 saknas."; return 1; }
+  command -v curl >/dev/null || { echo "curl saknas."; return 1; }
+  cat <<EOT
+Bakgrund bort (tillägg) använder modellen Robust Video Matting (mobilenetv3)
+av Peter Lin, licens GPL-3.0: https://github.com/PeterL1n/RobustVideoMatting
+Installeras i en egen mapp: $BG_DIR  (ca 300 MB Python-miljö + 14 MB modell).
+Känd kvalitet: mjuka kanter, mörka kläder kan bli delvis genomskinliga.
+EOT
+  if ((!yes)); then
+    read -r -p "Installera? [j/N] " a
+    [[ $a == [jJyY]* ]] || { echo "Avbrutet."; return 1; }
+  fi
+  mkdir -p "$BG_DIR" || return 1
+  if [[ ! -x $BG_PY ]]; then
+    python3 -m venv "$BG_DIR/venv" || { echo "Kunde inte skapa Python-miljö."; return 1; }
+  fi
+  "$BG_DIR/venv/bin/pip" install --quiet --disable-pip-version-check onnxruntime numpy ||
+    { echo "pip-installationen misslyckades."; return 1; }
+  if ! bg_verify; then
+    echo "Laddar ner modell..."
+    rm -f "$BG_MODEL" "$BG_MODEL.part"
+    curl -fL --progress-bar -o "$BG_MODEL.part" "$BG_URL" || { rm -f "$BG_MODEL.part"; echo "Nedladdningen misslyckades."; return 1; }
+    mv "$BG_MODEL.part" "$BG_MODEL"
+    if ! bg_verify; then
+      echo "SHA256-kontrollen misslyckades - modellen raderas. Installationen avbruten." >&2
+      rm -f "$BG_MODEL"
+      return 2
+    fi
+  fi
+  echo "Modellen verifierad (SHA256 ok). Tillägget är installerat."
+}
+
+cmd_uninstall_bgremove() {
+  if [[ -d $BG_DIR ]]; then rm -rf "$BG_DIR"; echo "Tog bort $BG_DIR"; else echo "Tillägget är inte installerat."; fi
+}
+
+cmd_check_bgremove() {
+  if bg_verify; then echo "ok: SHA256 stämmer"; else echo "FEL: modellen saknas eller har fel SHA256" >&2; return 1; fi
+}
+
+usage() {
+  cat <<EOT
+multicam $VERSION - skärm + upp till två kameror + mikrofon till MP4
+
+  multicam                     starta TUI:t
+  multicam install-bgremove    installera tillägget "bakgrund bort" [--yes]
+  multicam uninstall-bgremove  ta bort tillägget
+  multicam check-bgremove      verifiera modellens SHA256
+  multicam uninstall           ta bort multicam [--yes]
+  multicam --version | --help
+
+Miljö: MULTICAM_OUTPUT_DIR (utmapp, annars Omarchys, ~/Videos), MULTICAM_LOG=fil
+EOT
+}
+
+case ${1:-} in
+  --watch) cmd_watch; exit $? ;;
+  uninstall) shift; cmd_uninstall "$@"; exit $? ;;
+  install-bgremove) shift; cmd_install_bgremove "$@"; exit $? ;;
+  uninstall-bgremove) cmd_uninstall_bgremove; exit $? ;;
+  check-bgremove) cmd_check_bgremove; exit $? ;;
+  --version | -V) echo "multicam $VERSION"; exit 0 ;;
+  -h | --help | help) usage; exit 0 ;;
+  "") ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+###############################################################################
+# TUI
+###############################################################################
+STEP=20; BIG=100; MARGIN=20; MINS=120
+PRESETS=(ff3399 ff0000 ff9900 ffee00 00cc66 00aaff 6644ff ffffff)
+declare -A C            # per kamera: C[A.dev] .name .shape .ring .color .thick .bg .rx .ry .size .missing .sdev .sname
+declare -A CP PP        # mpv-PID och python-PID per kamera
+CAMS=(A B)
+MIC=""; MIC_DESC=""; MIC_MISSING=""; DAUDIO=on; SCREEN=""; SCREEN_MISSING=""
+DEVS=(); DEVNAMES=(); MICS=(); MICDESC=(); MONS=()
+MODE=move; SEL=0; REC=0; REC_START=0; CLEANED=0; SAVED=0; MSG=""; PROMPT=""
+SCR=form; ROW=0; STTY=""; MON=""; MX=0; MY=0; MW=0; MH=0; IN_ALT=0
+RESULT_FILE=""; STOP_PID=""
+
+need() { command -v "$1" >/dev/null 2>&1; }
+
+load_config() {
+  local k v id
+  for id in "${CAMS[@]}"; do
+    C[$id.dev]=""; C[$id.name]=""; C[$id.shape]=circle; C[$id.ring]=on; C[$id.color]="#${PRESETS[0]}"
+    C[$id.thick]=4; C[$id.bg]=off; C[$id.rx]=""; C[$id.ry]=""; C[$id.size]=240; C[$id.missing]=""
+  done
+  MIC="__default__"
+  [[ -f $CONF ]] || return 0
+  while IFS='=' read -r k v; do
+    case $k in
+      CAM_[AB]_DEV) C[${k:4:1}.dev]=$v ;;
+      CAM_[AB]_NAME) C[${k:4:1}.name]=$v ;;
+      CAM_[AB]_SHAPE) [[ $v == circle || $v == rect ]] && C[${k:4:1}.shape]=$v ;;
+      CAM_[AB]_RING) [[ $v == on || $v == off ]] && C[${k:4:1}.ring]=$v ;;
+      CAM_[AB]_COLOR) [[ $v =~ ^#[0-9a-f]{6}$ ]] && C[${k:4:1}.color]=$v ;;
+      CAM_[AB]_THICK) [[ $v =~ ^[0-9]+$ ]] && ((v >= 1 && v <= 12)) && C[${k:4:1}.thick]=$v ;;
+      CAM_[AB]_BG) [[ $v == on || $v == off ]] && C[${k:4:1}.bg]=$v ;;
+      CAM_[AB]_RX) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.rx]=$v ;;
+      CAM_[AB]_RY) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.ry]=$v ;;
+      CAM_[AB]_SIZE) [[ $v =~ ^[0-9]+$ ]] && C[${k:4:1}.size]=$v ;;
+      MIC) MIC=$v ;;
+      MIC_DESC) MIC_DESC=$v ;;
+      DESKTOP_AUDIO) [[ $v == on || $v == off ]] && DAUDIO=$v ;;
+      SCREEN) SCREEN=$v ;;
+    esac
+  done <"$CONF"
+}
+
+save_config() {
+  ((SAVED)) && return 0
+  [[ -n ${C[A.shape]:-} ]] || return 0
+  mkdir -p "$CONF_DIR" || return 0
+  local id dev name mic desc scr
+  {
+    for id in "${CAMS[@]}"; do
+      dev=${C[$id.dev]}; name=${C[$id.name]}
+      if [[ -z $dev && -n ${C[$id.missing]} ]]; then dev=${C[$id.sdev]}; name=${C[$id.sname]}; fi  # B5: saknad enhet behålls
+      printf 'CAM_%s_DEV=%s\nCAM_%s_NAME=%s\nCAM_%s_SHAPE=%s\nCAM_%s_RING=%s\nCAM_%s_COLOR=%s\nCAM_%s_THICK=%s\nCAM_%s_BG=%s\nCAM_%s_SIZE=%s\n' \
+        "$id" "$dev" "$id" "$name" "$id" "${C[$id.shape]}" "$id" "${C[$id.ring]}" "$id" "${C[$id.color]}" \
+        "$id" "${C[$id.thick]}" "$id" "${C[$id.bg]}" "$id" "${C[$id.size]}"
+      [[ -n ${C[$id.rx]} ]] && printf 'CAM_%s_RX=%s\nCAM_%s_RY=%s\n' "$id" "${C[$id.rx]}" "$id" "${C[$id.ry]}"
+    done
+    mic=$MIC; desc=$MIC_DESC
+    [[ $mic == __default__ ]] && mic=""
+    if [[ -n $MIC_MISSING ]]; then mic=$MIC_MISSING; fi
+    printf 'MIC=%s\nMIC_DESC=%s\nDESKTOP_AUDIO=%s\n' "$mic" "$desc" "$DAUDIO"
+    scr=$SCREEN; [[ -n $SCREEN_MISSING ]] && scr=$SCREEN_MISSING
+    printf 'SCREEN=%s\n' "$scr"
+  } >"$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+  SAVED=1
+}
+
+list_devices() {
+  local out line dev name
+  DEVS=(); DEVNAMES=()
+  if need omarchy-capture-webcam-list; then
+    out=$(omarchy-capture-webcam-list 2>/dev/null)
+    while IFS= read -r line; do
+      [[ $line == /dev/video* ]] || continue
+      dev=${line%%[[:space:]]*}
+      name=${line#"$dev"}; name=${name#"${name%%[![:space:]]*}"}
+      name=${name%% (*}; name=${name%:}
+      DEVS+=("$dev"); DEVNAMES+=("$name")
+    done <<<"$out"
+  elif need v4l2-ctl; then
+    out=$(v4l2-ctl --list-devices 2>/dev/null)
+    name=""
+    while IFS= read -r line; do
+      if [[ $line =~ ^[^[:space:]] ]]; then name=${line%% (*}; name=${name%:}
+      elif [[ $line =~ ^[[:space:]]+(/dev/video[0-9]+) && -n $name ]]; then
+        DEVS+=("${BASH_REMATCH[1]}"); DEVNAMES+=("$name"); name=""
+      fi
+    done <<<"$out"
+  fi
+}
+
+list_mics() {
+  local n d
+  MICS=(); MICDESC=()
+  while IFS=$'\t' read -r n d; do
+    [[ -n $n ]] && { MICS+=("$n"); MICDESC+=("$d"); }
+  done < <(pactl -f json list sources 2>/dev/null | jq -r '.[]|select(.name|endswith(".monitor")|not)|[.name,.description]|@tsv')
+}
+
+list_monitors() { mapfile -t MONS < <(hyprctl monitors -j 2>/dev/null | jq -r '.[]|"\(.name)\t\(.width)x\(.height)\t\(.focused)"'); }
+
+resolve_saved() { # B5: sparade enheter som saknas markeras, ersätts aldrig tyst
+  local id i found n
+  for id in "${CAMS[@]}"; do
+    n=${C[$id.name]}; found=""
+    C[$id.sdev]=${C[$id.dev]}; C[$id.sname]=$n
+    [[ -z ${C[$id.dev]} && -z $n ]] && continue
+    for i in "${!DEVS[@]}"; do
+      if [[ ${DEVNAMES[$i]} == "$n" ]]; then found=$i; break; fi
+    done
+    if [[ -n $found ]]; then C[$id.dev]=${DEVS[$found]}; C[$id.name]=${DEVNAMES[$found]}
+    else C[$id.missing]=${n:-${C[$id.dev]}}; C[$id.dev]=""; C[$id.name]=""; fi
+  done
+  if [[ ${C[A.dev]} && ${C[A.dev]} == "${C[B.dev]}" ]]; then C[B.dev]=""; C[B.name]=""; fi
+  # mikrofon
+  if [[ $MIC == __default__ ]]; then
+    local d; d=$(pactl get-default-source 2>/dev/null)
+    MIC=""
+    for i in "${!MICS[@]}"; do [[ ${MICS[$i]} == "$d" ]] && { MIC=$d; MIC_DESC=${MICDESC[$i]}; }; done
+  elif [[ -n $MIC ]]; then
+    found=""
+    for i in "${!MICS[@]}"; do [[ ${MICS[$i]} == "$MIC" ]] && found=$i; done
+    if [[ -n $found ]]; then MIC_DESC=${MICDESC[$found]}
+    else MIC_MISSING=$MIC; MIC=""; MIC_DESC=""; fi
+  fi
+  # skärm
+  if [[ -n $SCREEN ]]; then
+    local m ok=""
+    for m in "${MONS[@]}"; do [[ ${m%%$'\t'*} == "$SCREEN" ]] && ok=1; done
+    [[ -z $ok ]] && { SCREEN_MISSING=$SCREEN; SCREEN=""; }
+  fi
+}
+
+load_geom() { # sätter MON MX MY MW MH (logiska px, minus reserverat fält) för SCREEN eller fokuserad
+  local r
+  r=$(hyprctl monitors -j 2>/dev/null | jq -r --arg n "$SCREEN" '(if $n=="" then first(.[]|select(.focused)) else first(.[]|select(.name==$n)) end)
+    | "\(.name) \(.x+.reserved[0]) \(.y+.reserved[1]) \(((.width/.scale)-.reserved[0]-.reserved[2])|floor) \(((.height/.scale)-.reserved[1]-.reserved[3])|floor)"')
+  read -r MON MX MY MW MH <<<"$r"
+  [[ $MW =~ ^[0-9]+$ && $MH =~ ^[0-9]+$ ]]
+}
+
+###############################################################################
+# Geometri
+###############################################################################
+CW=0
+cam_w() { if [[ ${C[$1.shape]} == circle ]]; then CW=${C[$1.size]}; else CW=$((C[$1.size] * 16 / 9)); fi; }
+max_size() { # största tillåtna höjd för kameran
+  local m
+  if [[ ${C[$1.shape]} == circle ]]; then m=$((MW < MH ? MW : MH)); else m=$((MW * 9 / 16)); ((m > MH)) && m=$MH; fi
+  echo "$m"
+}
+clamp_cam() {
+  local id=$1 s=${C[$1.size]} m
+  m=$(max_size "$id")
+  ((s > m)) && s=$m
+  ((s < MINS)) && s=$MINS
+  C[$id.size]=$s
+  cam_w "$id"
+  ((C[$id.rx] > MW - CW)) && C[$id.rx]=$((MW - CW))
+  ((C[$id.ry] > MH - s)) && C[$id.ry]=$((MH - s))
+  ((C[$id.rx] < 0)) && C[$id.rx]=0
+  ((C[$id.ry] < 0)) && C[$id.ry]=0
+}
+preset_pos() { # numpad-layout: 7 8 9 / 4 5 6 / 1 2 3
+  local id=$1 n=$2 col row
+  col=$(((n - 1) % 3)); row=$((2 - (n - 1) / 3))
+  cam_w "$id"
+  C[$id.rx]=$((MARGIN + col * (MW - 2 * MARGIN - CW) / 2))
+  C[$id.ry]=$((MARGIN + row * (MH - 2 * MARGIN - C[$id.size]) / 2))
+}
+resize_pct() { # ±pct % runt bildens mitt
+  local id=$1 pct=$2 old new oldw cx cy
+  old=${C[$id.size]}; cam_w "$id"; oldw=$CW
+  new=$((old + old * pct / 100))
+  ((new == old)) && new=$((old + (pct > 0 ? 1 : -1)))
+  cx=$((C[$id.rx] + oldw / 2)); cy=$((C[$id.ry] + old / 2))
+  C[$id.size]=$new
+  clamp_cam "$id"      # begränsar storleken
+  cam_w "$id"
+  C[$id.rx]=$((cx - CW / 2)); C[$id.ry]=$((cy - C[$id.size] / 2))
+  clamp_cam "$id"
+}
+
+default_layout() {
+  local id k=0
+  for id in "${CAMS[@]}"; do
+    if [[ -z ${C[$id.rx]} ]]; then
+      clamp_cam "$id" 2>/dev/null
+      preset_pos "$id" $((k == 0 ? 3 : 1))
+    fi
+    k=$((k + 1))
+  done
+}
+
+apply_cam() { # en samlad hyprctl-anrop
+  local id=$1 s=${C[$1.size]} r=0 b=0 col w h
+  cam_w "$id"; w=$CW; h=$s
+  local sel="class:^Multicam$id\$"
+  [[ ${C[$id.shape]} == circle ]] && r=$((s / 2))
+  [[ ${C[$id.ring]} == on ]] && b=${C[$id.thick]}
+  col="rgba(${C[$id.color]#\#}ff)"
+  hyprctl --batch "dispatch hl.dsp.window.resize({ window = \"$sel\", x = $w, y = $h }); \
+dispatch hl.dsp.window.move({ window = \"$sel\", x = $((MX + C[$id.rx])), y = $((MY + C[$id.ry])) }); \
+dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"rounding\", value = $r }); \
+dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"border_size\", value = $b }); \
+dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"inactive_border_color\", value = \"$col\" }); \
+dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"active_border_color\", value = \"$col\" })" >/dev/null 2>&1
+}
+
+###############################################################################
+# Kameror (mpv)
+###############################################################################
+pick_size() { # väljer upplösning per enhet: 640x360, 640x480, 1280x720, annars första
+  local f s
+  f=$(v4l2-ctl --list-formats-ext -d "$1" 2>/dev/null)
+  for s in 640x360 640x480 1280x720; do
+    grep -q "Size: Discrete $s\$" <<<"$f" && { echo "$s"; return; }
+  done
+  grep -o 'Discrete [0-9]*x[0-9]*' <<<"$f" | head -1 | cut -d' ' -f2
+}
+
+save_pids() {
+  local id
+  : >"$RUN/pids"
+  for id in "${CAMS[@]}"; do
+    [[ -n ${CP[$id]:-} ]] && echo "${CP[$id]}" >>"$RUN/pids"
+    [[ -n ${PP[$id]:-} ]] && echo "${PP[$id]}" >>"$RUN/pids"
+  done
+}
+
+cam_active() { [[ -n ${C[$1.dev]} ]]; }
+
+win_mapped() { hyprctl clients -j 2>/dev/null | jq -e --arg c "Multicam$1" 'any(.[]; .class==$c)' >/dev/null 2>&1; }
+wait_mapped() { local i; for i in $(seq 60); do win_mapped "$1" && return 0; sleep 0.1; done; return 1; }
+
+ensure_rule() {
+  local id=$1
+  hc eval "if MC_$id == nil then MC_$id = hl.window_rule({name=\"multicam-$id\", match={class=\"^Multicam$id\$\"}, float=true, pin=true, no_initial_focus=true, border_size=0, no_dim=true, size={300,300}}) else MC_$id:set_enabled(true) end"
+}
+
+launch_cam() {
+  local id=$1 dev=${C[$1.dev]} vs w h
+  vs=$(pick_size "$dev"); [[ -z $vs ]] && vs=640x480
+  w=${vs%x*}; h=${vs#*x}
+  ensure_rule "$id"
+  local common=(--title="Multicam$id" --wayland-app-id="Multicam$id" --no-border --no-audio --no-osc --osd-level=0
+    --no-input-default-bindings --panscan=1 --keepaspect-window=no --terminal=no --really-quiet --no-config)
+  CP[$id]=""; PP[$id]=""
+  if [[ ${C[$id.bg]} == on ]] && bg_installed && bg_verify; then
+    local fifo=$RUN/bg$id.fifo
+    rm -f "$fifo"; mkfifo "$fifo"
+    setsid "$BG_PY" "$APPDIR/lib/bg.py" --dev "$dev" --w "$w" --h "$h" --fps 30 --threads 2 --ratio 0.25 --model "$BG_MODEL" >"$fifo" 2>/dev/null &
+    PP[$id]=$!
+    setsid mpv "$fifo" --demuxer=rawvideo --demuxer-rawvideo-w="$w" --demuxer-rawvideo-h="$h" \
+      --demuxer-rawvideo-mp-format=rgba --demuxer-rawvideo-fps=30 --profile=low-latency --untimed --no-cache \
+      --vo=gpu-next --background=color --background-color='#00000000' --alpha=yes "${common[@]}" &>/dev/null &
+    CP[$id]=$!
+  else
+    [[ ${C[$id.bg]} == on ]] && MSG="Bakgrund bort: tillägget saknas eller modellen är ogiltig - visar vanlig kamera."
+    setsid mpv "av://v4l2:$dev" --profile=low-latency --untimed --no-cache \
+      --demuxer-lavf-o="video_size=$vs,framerate=30" "${common[@]}" &>/dev/null &
+    CP[$id]=$!
+  fi
+  save_pids
+  log "launch $id dev=$dev size=$vs bg=${C[$id.bg]} mpv=${CP[$id]} py=${PP[$id]}"
+}
+
+stop_cam() { # stänger en kamera (egna PID:er + klass)
+  local id=$1 p
+  hc dispatch "hl.dsp.window.close({ window = \"class:^Multicam$id\$\" })"
+  for p in "${PP[$id]:-}" "${CP[$id]:-}"; do
+    [[ -n $p && -d /proc/$p ]] && { kill -TERM -- "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null; }
+  done
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -d /proc/${CP[$id]:-x} || -d /proc/${PP[$id]:-x} ]] || break
+    sleep 0.1
+  done
+  for p in "${PP[$id]:-}" "${CP[$id]:-}"; do [[ -n $p && -d /proc/$p ]] && kill -KILL -- "-$p" 2>/dev/null; done
+  CP[$id]=""; PP[$id]=""
+  save_pids
+}
+
+start_preview() {
+  local id
+  mkdir -p "$RUN"; : >"$RUN/pids"
+  load_geom || { MSG="Hittade inte skärmen."; return 1; }
+  default_layout
+  for id in "${CAMS[@]}"; do cam_active "$id" && launch_cam "$id"; done
+  for id in "${CAMS[@]}"; do
+    cam_active "$id" || continue
+    if wait_mapped "$id"; then clamp_cam "$id"; apply_cam "$id"
+    else MSG="Kamera $id öppnades inte (används enheten av något annat?)"; fi
+  done
+  return 0
+}
+
+###############################################################################
+# Inspelning
+###############################################################################
+focused_monitor() { hyprctl monitors -j 2>/dev/null | jq -r 'first(.[]|select(.focused)).name'; }
+
+start_recording() {
+  local args=(--fullscreen) prev="" fm
+  if gsr_running; then MSG="En annan inspelning pågår redan - avbryter."; return 1; fi
+  [[ -n $MIC ]] && args+=(--with-microphone-audio)
+  [[ $DAUDIO == on ]] && args+=(--with-desktop-audio)
+  rm -f "$PTR"
+  if [[ -n $MIC ]]; then
+    pactl get-default-source >"$RUN/orig_source" 2>/dev/null
+    pactl set-default-source "$MIC" >/dev/null 2>&1
+  fi
+  fm=$(focused_monitor)
+  if [[ -n $SCREEN && $SCREEN != "$fm" ]]; then   # --fullscreen spelar in den fokuserade skärmen
+    prev=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
+    hc dispatch "hl.dsp.focus({ monitor = \"$SCREEN\" })"
+  fi
+  [[ -n ${MULTICAM_OUTPUT_DIR:-} ]] && export OMARCHY_SCREENRECORD_DIR=$MULTICAM_OUTPUT_DIR
+  rm -rf "$RUN/result" "$RUN/finish.lock"
+  omarchy-capture-screenrecording "${args[@]}" >/dev/null 2>&1
+  if [[ -n $prev ]]; then hc dispatch "hl.dsp.focus({ window = \"address:$prev\" })"; fi
+  if ! gsr_running || [[ ! -s $PTR ]]; then
+    MSG="Inspelningen startade inte."
+    restore_mic
+    return 1
+  fi
+  cp "$PTR" "$RUN/recfile"
+  touch "$RUN/recording"
+  REC=1; printf -v REC_START '%(%s)T' -1
+  setsid -f "$SELF" --watch >/dev/null 2>&1 </dev/null
+  refresh_indicator
+  log "recording started: $(<"$RUN/recfile")"
+  return 0
+}
+
+stop_recording() { # blockerar tills Omarchys slutbehandling är klar och filen bytt namn
+  omarchy-capture-screenrecording --stop-recording >/dev/null 2>&1
+  finish_recording
+}
+
+###############################################################################
+# Terminal / ritning
+###############################################################################
+KEY=""
+read_key() { # 0 = tangent i KEY, 1 = EOF, 2 = timeout
+  local k c rc
+  KEY=""
+  IFS= read -rsn1 -t "${1:-0.2}" k; rc=$?
+  ((rc > 128)) && return 2
+  ((rc != 0)) && return 1
+  if [[ -z $k || $k == $'\r' ]]; then KEY=ENTER; return 0; fi
+  if [[ $k == $'\e' ]]; then
+    if IFS= read -rsn1 -t 0.05 c; then
+      k+=$c
+      if [[ $c == '[' || $c == 'O' ]]; then
+        while IFS= read -rsn1 -t 0.05 c; do k+=$c; [[ $c == [@-~] ]] && break; done
+      fi
+    fi
+  fi
+  KEY=$k
+  return 0
+}
+
+SW=""
+swatch() { local h=${1#\#}; SW=$(printf '\e[48;2;%d;%d;%dm  \e[0m' $((16#${h:0:2})) $((16#${h:2:2})) $((16#${h:4:2}))); }
+
+fmt_time() { local s=$1; printf '%02d:%02d' $((s / 60)) $((s % 60)); }
+
+# --- formulär ---
+RT=(); RI=()
+build_rows() {
+  RT=(); RI=()
+  local id
+  for id in "${CAMS[@]}"; do
+    RT+=(cam); RI+=("$id")
+    if cam_active "$id"; then
+      RT+=(shape ring color thick); RI+=("$id" "$id" "$id" "$id")
+      bg_installed && { RT+=(bg); RI+=("$id"); }
+    fi
+  done
+  RT+=(mic daudio screen start); RI+=("" "" "" "")
+}
+
+cam_label() { local n; n=${C[$1.name]}; echo "${n:-av}"; }
+
+draw_form() {
+  local i t id label val line n
+  build_rows
+  ((ROW >= ${#RT[@]})) && ROW=$((${#RT[@]} - 1))
+  printf '\e[H'
+  printf '\e[2K\e[1m multicam %s\e[0m  -  skärm + kameror + mikrofon\n\e[2K\n' "$VERSION"
+  for i in "${!RT[@]}"; do
+    t=${RT[$i]}; id=${RI[$i]}; val=""
+    case $t in
+      cam)
+        label="Kamera $id"; val=$(cam_label "$id")
+        [[ -n ${C[$id.missing]} ]] && val+="   $(printf '\e[33m')⚠ saknas: ${C[$id.missing]}$(printf '\e[0m')"
+        ;;
+      shape) label="   form"
+        if [[ ${C[$id.shape]} == circle ]]; then val="● cirkel   ○ rektangel"; else val="○ cirkel   ● rektangel"; fi ;;
+      ring) label="   ring"; [[ ${C[$id.ring]} == on ]] && val="[x] på" || val="[ ] av" ;;
+      color) label="   kantfärg"; swatch "${C[$id.color]}"; val="$SW ${C[$id.color]}   (←/→ färdiga, c väljare, C/Enter hexkod)" ;;
+      thick) label="   tjocklek"; val="${C[$id.thick]} px   (←/→ 1-12)" ;;
+      bg) label="   bakgrund bort"; [[ ${C[$id.bg]} == on ]] && val="[x] på" || val="[ ] av" ;;
+      mic)
+        label="Mikrofon"
+        if [[ -n $MIC ]]; then val=${MIC_DESC:-$MIC}; else val="ingen"; fi
+        [[ -n $MIC_MISSING ]] && val+="   $(printf '\e[33m')⚠ saknas: $MIC_MISSING$(printf '\e[0m')"
+        ;;
+      daudio) label="Skrivbordsljud"; [[ $DAUDIO == on ]] && val="[x] på" || val="[ ] av" ;;
+      screen)
+        label="Skärm"
+        if [[ -z $SCREEN ]]; then val="fokuserad ($(focused_monitor))"; else val=$SCREEN; fi
+        [[ -n $SCREEN_MISSING ]] && val+="   $(printf '\e[33m')⚠ saknas: $SCREEN_MISSING$(printf '\e[0m')"
+        ;;
+      start) label=""; val="▶ Förhandsvisa kameror och starta" ;;
+    esac
+    if [[ $t == start ]]; then line=" $val"; else printf -v line ' %-18s %s' "$label" "$val"; fi
+    if ((i == ROW)); then printf '\e[2K\e[7m%s\e[0m\n' "$line"; else printf '\e[2K%s\n' "$line"; fi
+  done
+  printf '\e[2K\n'
+  gsr_running && printf '\e[2K\e[33m Obs: en inspelning pågår redan - starta inte en ny.\e[0m\n'
+  printf '\e[2K %s\n' "${PROMPT:-$MSG}"
+  printf '\e[2K\e[2m ↑↓ rad  ←→ ändra  Enter växla/välj  C hexkod  c färgväljare  F5 förhandsvisa  q avsluta\e[0m\n'
+  printf '\e[J'
+}
+
+cycle_idx() { # cycle_idx <antal> <nuvarande> <delta> -> ny index (0..n-1)
+  echo $((($2 + $3 + $1) % $1))
+}
+
+form_change() { # delta ±1
+  local t=${RT[$ROW]} id=${RI[$ROW]} d=$1 i cur opts=() optn=() other idx p
+  MSG=""
+  case $t in
+    cam)
+      other=B; [[ $id == B ]] && other=A
+      opts=(""); optn=("")
+      for i in "${!DEVS[@]}"; do
+        [[ ${DEVS[$i]} == "${C[$other.dev]}" ]] && continue
+        opts+=("${DEVS[$i]}"); optn+=("${DEVNAMES[$i]}")
+      done
+      idx=0
+      for i in "${!opts[@]}"; do [[ ${opts[$i]} == "${C[$id.dev]}" ]] && idx=$i; done
+      idx=$(cycle_idx ${#opts[@]} "$idx" "$d")
+      C[$id.dev]=${opts[$idx]}; C[$id.name]=${optn[$idx]}; C[$id.missing]=""
+      ;;
+    shape) [[ ${C[$id.shape]} == circle ]] && C[$id.shape]=rect || C[$id.shape]=circle ;;
+    ring) [[ ${C[$id.ring]} == on ]] && C[$id.ring]=off || C[$id.ring]=on ;;
+    bg) [[ ${C[$id.bg]} == on ]] && C[$id.bg]=off || C[$id.bg]=on ;;
+    thick) p=$((C[$id.thick] + d)); ((p < 1)) && p=1; ((p > 12)) && p=12; C[$id.thick]=$p ;;
+    color)
+      idx=-1
+      for i in "${!PRESETS[@]}"; do [[ ${C[$id.color]} == "#${PRESETS[$i]}" ]] && idx=$i; done
+      if ((idx < 0)); then idx=0; else idx=$(cycle_idx ${#PRESETS[@]} "$idx" "$d"); fi
+      C[$id.color]="#${PRESETS[$idx]}"
+      ;;
+    mic)
+      opts=(""); optn=("")
+      for i in "${!MICS[@]}"; do opts+=("${MICS[$i]}"); optn+=("${MICDESC[$i]}"); done
+      idx=0
+      for i in "${!opts[@]}"; do [[ ${opts[$i]} == "$MIC" ]] && idx=$i; done
+      idx=$(cycle_idx ${#opts[@]} "$idx" "$d")
+      MIC=${opts[$idx]}; MIC_DESC=${optn[$idx]}; MIC_MISSING=""
+      ;;
+    daudio) [[ $DAUDIO == on ]] && DAUDIO=off || DAUDIO=on ;;
+    screen)
+      opts=("")
+      for i in "${!MONS[@]}"; do opts+=("${MONS[$i]%%$'\t'*}"); done
+      idx=0
+      for i in "${!opts[@]}"; do [[ ${opts[$i]} == "$SCREEN" ]] && idx=$i; done
+      idx=$(cycle_idx ${#opts[@]} "$idx" "$d")
+      SCREEN=${opts[$idx]}; SCREEN_MISSING=""
+      ;;
+  esac
+}
+
+hex_prompt() { # sätter HEX; 0 = ok, 1 = avbrutet
+  local buf="" id=$1
+  HEX=""
+  while :; do
+    PROMPT="Hexkod #rrggbb: #${buf}_   (Enter ok, Esc avbryt)"
+    $DRAW
+    read_key 5
+    case $? in 1) PROMPT=""; return 1 ;; 2) continue ;; esac
+    case $KEY in
+      ENTER)
+        if [[ $buf =~ ^[0-9a-fA-F]{6}$ ]]; then HEX="#${buf,,}"; PROMPT=""; return 0
+        else MSG="Ogiltig hexkod (förväntar sex hexsiffror)"; fi ;;
+      $'\e') PROMPT=""; return 1 ;;
+      $'\x7f' | $'\b') buf=${buf%?} ;;
+      '#') ;;
+      [0-9a-fA-F]) ((${#buf} < 6)) && buf+=$KEY ;;
+    esac
+  done
+}
+
+pick_hyprpicker() { # c: starta hyprpicker (kräver musklick)
+  local out
+  if ! need hyprpicker; then MSG="hyprpicker saknas."; return 1; fi
+  MSG="Klicka på valfri pixel på skärmen (Esc avbryter)..."; $DRAW
+  out=$(timeout 120 hyprpicker -f hex 2>/dev/null </dev/null | head -1)
+  out=${out,,}
+  if [[ $out =~ ^#[0-9a-f]{6}$ ]]; then HEX=$out; MSG=""; return 0; fi
+  MSG="Ingen färg vald."; return 1
+}
+
+form_loop() { # 0 = starta förhandsvisning, 1 = avsluta
+  DRAW=draw_form
+  while :; do
+    draw_form
+    read_key
+    case $? in 1) return 1 ;; 2) continue ;; esac
+    local t=${RT[$ROW]} id=${RI[$ROW]}
+    case $KEY in
+      $'\e[A' | $'\eOA' | k) ((ROW > 0)) && ROW=$((ROW - 1)) ;;
+      $'\e[B' | $'\eOB' | j) ((ROW < ${#RT[@]} - 1)) && ROW=$((ROW + 1)) ;;
+      $'\e[C' | $'\eOC' | l) form_change 1 ;;
+      $'\e[D' | $'\eOD' | h) form_change -1 ;;
+      c) if [[ $t == color ]]; then pick_hyprpicker && C[$id.color]=$HEX; else MSG="Välj raden 'kantfärg' först."; fi ;;
+      C) if [[ $t == color ]]; then hex_prompt "$id" && C[$id.color]=$HEX; else MSG="Välj raden 'kantfärg' först."; fi ;;
+      $'\e[15~') return 0 ;;
+      ENTER)
+        case $t in
+          start) return 0 ;;
+          color) hex_prompt "$id" && C[$id.color]=$HEX ;;
+          *) form_change 1 ;;
+        esac ;;
+      q | $'\e') return 1 ;;
+    esac
+  done
+}
+
+# --- förhandsvisning / inspelning ---
+draw_run() {
+  local id now state i sel line
+  printf -v now '%(%s)T' -1
+  printf '\e[H'
+  if ((REC)); then
+    state=$(printf '\e[1;31m● SPELAR IN %s\e[0m' "$(fmt_time $((now - REC_START)))")
+  else
+    state=$(printf '\e[1;33m○ FÖRHANDSVISNING\e[0m  (Enter = starta inspelning)')
+  fi
+  printf '\e[2K multicam  %s\n\e[2K\n' "$state"
+  for i in "${!CAMS[@]}"; do
+    id=${CAMS[$i]}
+    cam_active "$id" || continue
+    sel=" "; ((i == SEL)) && sel=">"
+    printf -v line '%s [%s] %-24s x=%d y=%d storlek=%d %s ring=%s %s %dpx bg=%s' "$sel" "$id" "$(cam_label "$id"):" \
+      "$((MX + C[$id.rx]))" "$((MY + C[$id.ry]))" "${C[$id.size]}" \
+      "$([[ ${C[$id.shape]} == circle ]] && echo cirkel || echo rektangel)" \
+      "$([[ ${C[$id.ring]} == on ]] && echo på || echo av)" "${C[$id.color]}" "${C[$id.thick]}" "${C[$id.bg]}"
+    printf '\e[2K%s\n' "$line"
+  done
+  printf '\e[2K\n'
+  printf '\e[2K Läge: %s   Vald kamera: %s\n' "$([[ $MODE == move ]] && echo '[FLYTTA]' || echo '[STORLEK]')" "${CAMS[$SEL]}"
+  printf '\e[2K\n'
+  printf '\e[2K %s\n' "${PROMPT:-$MSG}"
+  printf '\e[2K\e[2m Tab kamera  ↑↓←→ flytta/storlek (Shift = stort)  m läge  +/- PgUp/PgDn storlek  1-9 position\e[0m\n'
+  printf '\e[2K\e[2m s form  r ring  c/C färg  p nästa färg  [ ] tjocklek  b bakgrund  q avsluta\e[0m\n'
+  printf '\e[J'
+}
+
+confirm() { # confirm "text" -> 0 = ja
+  while :; do
+    PROMPT="$1 [j/N]"; $DRAW
+    read_key 5
+    case $? in 1) PROMPT=""; return 0 ;; 2) continue ;; esac
+    PROMPT=""
+    case $KEY in j | J | y | Y) return 0 ;; *) return 1 ;; esac
+  done
+}
+
+move_cam() { # dx dy (px)
+  local id=${CAMS[$SEL]}
+  C[$id.rx]=$((C[$id.rx] + $1)); C[$id.ry]=$((C[$id.ry] + $2))
+}
+
+run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
+  DRAW=draw_run
+  local id lastdraw=0 now k
+  SEL=0
+  cam_active A || SEL=1
+  cam_active "${CAMS[$SEL]}" || SEL=0
+  draw_run
+  while :; do
+    read_key 0.2; k=$?
+    if ((k == 1)); then return 1; fi
+    if ((REC)) && ! gsr_running; then   # stoppad utifrån (Alt+Print / klick / SIGTERM)
+      MSG="Inspelningen stoppades - slutbehandlar..."; draw_run
+      finish_recording
+      RESULT_FILE=$(<"$RUN/result") 2>/dev/null
+      REC=0
+      return 0
+    fi
+    if ((k == 2)); then
+      printf -v now '%(%s)T' -1
+      ((now != lastdraw)) && { lastdraw=$now; draw_run; }
+      continue
+    fi
+    id=${CAMS[$SEL]}
+    cam_active "$id" || id=""
+    MSG=""
+    case $KEY in
+      $'\t') SEL=$(((SEL + 1) % 2)); cam_active "${CAMS[$SEL]}" || SEL=$(((SEL + 1) % 2)) ;;
+      $'\e[Z') SEL=$(((SEL + 1) % 2)); cam_active "${CAMS[$SEL]}" || SEL=$(((SEL + 1) % 2)) ;;
+      m) [[ $MODE == move ]] && MODE=size || MODE=move ;;
+      q | $'\e')
+        if ((REC)); then
+          if confirm "Stoppa inspelningen och avsluta?"; then
+            MSG="Stoppar och slutbehandlar..."; draw_run
+            stop_recording
+            RESULT_FILE=$(<"$RUN/result") 2>/dev/null
+            REC=0
+            return 0
+          fi
+        else return 1; fi ;;
+      ENTER | $'\e[15~')
+        if ((!REC)); then
+          MSG="Startar inspelning..."; draw_run
+          start_recording && MSG=""
+        fi ;;
+    esac
+    if [[ -n $id ]]; then
+      local changed=1
+      case $KEY in
+        $'\e[A' | $'\eOA') [[ $MODE == move ]] && move_cam 0 -$STEP || resize_pct "$id" 10 ;;
+        $'\e[B' | $'\eOB') [[ $MODE == move ]] && move_cam 0 $STEP || resize_pct "$id" -10 ;;
+        $'\e[C' | $'\eOC') [[ $MODE == move ]] && move_cam $STEP 0 || resize_pct "$id" 10 ;;
+        $'\e[D' | $'\eOD') [[ $MODE == move ]] && move_cam -$STEP 0 || resize_pct "$id" -10 ;;
+        $'\e[1;2A') [[ $MODE == move ]] && move_cam 0 -$BIG || resize_pct "$id" 25 ;;
+        $'\e[1;2B') [[ $MODE == move ]] && move_cam 0 $BIG || resize_pct "$id" -25 ;;
+        $'\e[1;2C') [[ $MODE == move ]] && move_cam $BIG 0 || resize_pct "$id" 25 ;;
+        $'\e[1;2D') [[ $MODE == move ]] && move_cam -$BIG 0 || resize_pct "$id" -25 ;;
+        '+' | '=' | $'\e[5~') resize_pct "$id" 10 ;;
+        '-' | '_' | $'\e[6~') resize_pct "$id" -10 ;;
+        [1-9]) preset_pos "$id" "$KEY" ;;
+        s) [[ ${C[$id.shape]} == circle ]] && C[$id.shape]=rect || C[$id.shape]=circle ;;
+        r) [[ ${C[$id.ring]} == on ]] && C[$id.ring]=off || C[$id.ring]=on ;;
+        p | P)
+          local idx=-1 i d=1; [[ $KEY == P ]] && d=-1
+          for i in "${!PRESETS[@]}"; do [[ ${C[$id.color]} == "#${PRESETS[$i]}" ]] && idx=$i; done
+          if ((idx < 0)); then idx=0; else idx=$(cycle_idx ${#PRESETS[@]} "$idx" "$d"); fi
+          C[$id.color]="#${PRESETS[$idx]}" ;;
+        '[') ((C[$id.thick] > 1)) && C[$id.thick]=$((C[$id.thick] - 1)) ;;
+        ']') ((C[$id.thick] < 12)) && C[$id.thick]=$((C[$id.thick] + 1)) ;;
+        c) if pick_hyprpicker; then C[$id.color]=$HEX; fi ;;
+        C) if hex_prompt "$id"; then C[$id.color]=$HEX; fi ;;
+        b)
+          if bg_installed; then
+            [[ ${C[$id.bg]} == on ]] && C[$id.bg]=off || C[$id.bg]=on
+            MSG="Byter kamera $id..."; draw_run
+            stop_cam "$id"; launch_cam "$id"; wait_mapped "$id"
+            MSG=${MSG#Byter*}
+          else MSG="Tillägget 'bakgrund bort' är inte installerat (multicam install-bgremove)."; fi ;;
+        *) changed=0 ;;
+      esac
+      if ((changed)); then clamp_cam "$id"; apply_cam "$id"; fi
+    fi
+    draw_run
+  done
+}
+
+result_screen() {
+  local f=$1 a
+  DRAW=draw_run
+  printf '\e[H\e[J'
+  if [[ -f $f ]]; then
+    printf ' Inspelningen är klar:\n\n   %s\n\n' "$f"
+    if need omacut; then
+      printf ' Öppna i omacut? [J/n] '
+      read_key 60
+      case $KEY in
+        n | N) ;;
+        *) setsid -f omacut "$f" >/dev/null 2>&1 </dev/null ;;
+      esac
+    else
+      printf ' (omacut finns inte installerat)\n'; sleep 1
+    fi
+  else
+    printf ' Inspelningen kunde inte slutföras (ingen fil hittades).\n'; sleep 2
+  fi
+}
+
+###############################################################################
+# Städning och huvudprogram
+###############################################################################
+cleanup() {
+  ((CLEANED)) && return 0
+  CLEANED=1
+  trap '' INT TERM HUP
+  save_config
+  if ((REC)) && gsr_running; then   # stoppa först (SIGINT), städa direkt, slutbehandla sist
+    omarchy-capture-screenrecording --stop-recording >/dev/null 2>&1 &
+    STOP_PID=$!
+    sleep 0.15
+  fi
+  cleanup_windows
+  restore_mic
+  refresh_indicator
+  if ((REC)); then
+    [[ -n $STOP_PID ]] && wait "$STOP_PID" 2>/dev/null
+    finish_recording
+    REC=0
+  fi
+  [[ $(cat "$RUN/tui.pid" 2>/dev/null) == "$$" ]] && rm -f "$RUN/tui.pid"
+  if ((IN_ALT)); then printf '\e[?25h\e[?1049l'; fi
+  [[ -n $STTY ]] && stty "$STTY" 2>/dev/null
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+main() {
+  local m
+  for m in hyprctl jq mpv pactl gpu-screen-recorder omarchy-capture-screenrecording; do
+    need "$m" || { echo "multicam: saknar '$m' (krävs)." >&2; CLEANED=1; exit 1; }
+  done
+  mkdir -p "$RUN"
+  if [[ -f $RUN/tui.pid ]] && kill -0 "$(<"$RUN/tui.pid")" 2>/dev/null &&
+    grep -q multicam "/proc/$(<"$RUN/tui.pid")/cmdline" 2>/dev/null; then
+    echo "multicam: körs redan (PID $(<"$RUN/tui.pid"))." >&2; CLEANED=1; exit 1
+  fi
+  echo $$ >"$RUN/tui.pid"
+  rm -rf "$RUN/result" "$RUN/recfile" "$RUN/recording" "$RUN/finish.lock"
+  # återställ mikrofon efter en tidigare krasch om ingen inspelning pågår
+  gsr_running || restore_mic
+  STTY=$(stty -g 2>/dev/null)
+  load_config
+  list_devices; list_mics; list_monitors
+  resolve_saved
+  printf '\e[?1049h\e[?25l'; IN_ALT=1
+  if form_loop; then
+    if start_preview; then
+      if run_loop; then
+        ((${#RESULT_FILE})) && result_screen "$RESULT_FILE"
+      fi
+    else
+      printf '\e[H\e[J %s\n' "$MSG"; sleep 2
+    fi
+  fi
+  exit 0
+}
+main
