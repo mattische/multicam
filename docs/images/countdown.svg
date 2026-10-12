@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1000 520" width="1000" height="520" font-family="JetBrainsMono Nerd Font, JetBrains Mono, DejaVu Sans Mono, monospace" font-size="17">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1000" height="520" fill="#232433"/>
+  <g filter="url(#shadow)">
+    <rect x="30" y="30" width="940" height="460" rx="12" fill="#1a1b26" stroke="#7aa2f7" stroke-width="2"/>
+  </g>
+  <g fill="#c0caf5">
+    <rect x="60" y="62" width="16" height="12" rx="2" fill="#7aa2f7"/><path d="M76 68 l7 -5 v10z" fill="#7aa2f7"/>
+    <text x="98" y="76"><tspan fill="#7aa2f7" font-weight="bold">multicam</tspan><tspan fill="#737aa2">  1.4.0   Countdown</tspan></text>
+    <rect x="440" y="150" width="40" height="40" fill="#7aa2f7"/><rect x="480" y="150" width="40" height="40" fill="#7aa2f7"/><rect x="520" y="150" width="40" height="40" fill="#7aa2f7"/><rect x="520" y="190" width="40" height="40" fill="#7aa2f7"/><rect x="440" y="230" width="40" height="40" fill="#7aa2f7"/><rect x="480" y="230" width="40" height="40" fill="#7aa2f7"/><rect x="520" y="230" width="40" height="40" fill="#7aa2f7"/><rect x="520" y="270" width="40" height="40" fill="#7aa2f7"/><rect x="440" y="310" width="40" height="40" fill="#7aa2f7"/><rect x="480" y="310" width="40" height="40" fill="#7aa2f7"/><rect x="520" y="310" width="40" height="40" fill="#7aa2f7"/>
+    <text x="500" y="392" text-anchor="middle" font-weight="bold">Recording starts in 3 s</text>
+    <rect x="60" y="420" width="880" height="1.5" fill="#414868"/>
+    <g font-size="15">
+      <rect x="60" y="436" width="40" height="24" fill="#24283b"/><text x="66" y="453" fill="#7aa2f7" font-weight="bold">Esc</text>
+      <rect x="106" y="436" width="22" height="24" fill="#24283b"/><text x="112" y="453" fill="#7aa2f7" font-weight="bold">q</text><text x="136" y="453" fill="#737aa2">cancel</text>
+      <rect x="210" y="436" width="22" height="24" fill="#24283b"/><text x="216" y="453" fill="#7aa2f7" font-weight="bold">⏎</text><text x="240" y="453" fill="#737aa2">start now</text>
+    </g>
+  </g>
+</svg>

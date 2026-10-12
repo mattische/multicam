@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Visuella tester (kräver upplåst skärm; en människa/agent måste titta på PNG-filerna i $SCRATCH/evidence/; de checkas aldrig in eftersom de visar kamerabild och skärm).
-Kör: tests/visual.py [shapes|record|bg|tui]. Skriver nedskalade PNG:er och skriver ut vad som sparats."""
+"""Visual tests (require an unlocked screen; a human/agent must look at the PNG files in $SCRATCH/evidence/; they are never committed because they show the camera image and the screen).
+Run: tests/visual.py [shapes|record|bg|tui]. Writes downscaled PNGs and prints what was saved."""
 import sys
 from mclib import *
 
@@ -46,7 +46,7 @@ def record():
             sh(f'ffmpeg -y -v error -ss {t} -i "{fp}" -frames:v 1 -vf scale=800:-1 {E}{n}.png')
         for f, n in [('bar', 'e3-bar'), ('bar2', 'e3-bar2')]:
             sh(f'ffmpeg -y -v error -i /tmp/claude-1000/{f}.png -vf "crop=700:34:in_w/2-350:0,scale=1400:-1" {E}{n}.png')
-        print('saved c1-frame-0.2s, x1-frame-4s, e3-bar (under inspelning), e3-bar2 (efter stopp)')
+        print('saved c1-frame-0.2s, x1-frame-4s, e3-bar (during recording), e3-bar2 (after stop)')
         s.send('n'); s.wait_exit(5)
     finally:
         s.close(); shutil.rmtree(o, ignore_errors=True)
@@ -66,7 +66,7 @@ def bg():
 
 
 def tui():
-    """Riktig terminal via omarchy-launch-tui + wtype; avbryter om fokus inte ligger på TUI-fönstret."""
+    """Real terminal via omarchy-launch-tui + wtype; aborts if focus is not on the TUI window."""
     h = make_home('d7w', cfg(shape='circle', ring='on', size=200) + 'CAM_A_RX=200\nCAM_A_RY=300\n')
     subprocess.Popen(['omarchy-launch-tui', '--app-id=TUI.float', 'env', f'HOME={h}', BIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     w = wait_until(lambda: [c for c in clients() if c['class'] == 'TUI.float'], 10)
@@ -74,11 +74,11 @@ def tui():
     addr = w[0]['address']
     try:
         def key(*k):
-            assert active_addr() == addr, f'fokus ej på TUI före {k}'
+            assert active_addr() == addr, f'focus not on TUI before {k}'
             subprocess.run(['wtype'] + list(k)); time.sleep(0.5)
         key('-k', 'F5'); wait_until(lambda: 'MulticamA' in geo(), 10); time.sleep(1)
-        res = [('efter kamerastart', active_addr() == addr)]
-        for n, k in [('höger', ('-k', 'Right')), ('ner', ('-k', 'Down')), ('s', ('s',)), ('r', ('r',)), ('PgUp', ('-k', 'Page_Up')), ('1', ('1',)), ('m', ('m',)), ('upp', ('-k', 'Up'))]:
+        res = [('after camera start', active_addr() == addr)]
+        for n, k in [('right', ('-k', 'Right')), ('down', ('-k', 'Down')), ('s', ('s',)), ('r', ('r',)), ('PgUp', ('-k', 'Page_Up')), ('1', ('1',)), ('m', ('m',)), ('up', ('-k', 'Up'))]:
             key(*k); res.append((n, active_addr() == addr))
         print(res)
         key('q'); time.sleep(1.5)

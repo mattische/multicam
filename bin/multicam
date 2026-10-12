@@ -1,8 +1,8 @@
 #!/bin/bash
-# multicam - tangentbordsstyrd inspelning av skärm + upp till två kameror + mikrofon (Omarchy/Hyprland)
-# Bash. Ändrar inget i /usr eller i Omarchys filer. Se README.md.
+# multicam - keyboard-driven recording of screen + up to two cameras + microphone (Omarchy/Hyprland)
+# Bash. Changes nothing in /usr or in Omarchy's files. See README.md.
 
-VERSION=1.3.0
+VERSION=1.4.0
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 APPDIR=${SELF%/*/*}
 DATA_DIR=$HOME/.local/share/multicam
@@ -10,24 +10,42 @@ CONF_DIR=$HOME/.config/multicam
 CONF=$CONF_DIR/config
 BIN_LINK=$HOME/.local/bin/multicam
 DESKTOP=$HOME/.local/share/applications/multicam.desktop
+ICON=$HOME/.local/share/icons/hicolor/scalable/apps/multicam.svg
 BINDINGS=$HOME/.config/hypr/bindings.lua
-PLUGIN_ID=multicam.recording
-PLUGIN_DIR=$HOME/.config/omarchy/plugins/$PLUGIN_ID   # bar-ikonen (Quickshell-plugin)
+KEYCOMBO="SUPER + ALT + M"
+# Where the files next to the program are (lib/bg.py, shell-plugin/), and how it was installed:
+#   package = /usr/bin/multicam from pacman (files in /usr/share/multicam; updates and removal through pacman)
+#   user    = install.sh (~/.local/share/multicam, ~/.local/bin/multicam is a link to it)
+#   repo    = run straight from a git checkout (behaves like user for update/uninstall of the per-user copy)
+if [[ $SELF == /usr/* ]] || [[ ! -f $APPDIR/lib/bg.py && -f $APPDIR/share/multicam/lib/bg.py ]]; then
+  INSTALL_MODE=package
+  SHARE_DIR=$APPDIR/share/multicam                # <prefix>/bin -> <prefix>/share/multicam
+  [[ -f $SHARE_DIR/lib/bg.py ]] || SHARE_DIR=/usr/share/multicam
+elif [[ $APPDIR -ef $DATA_DIR ]]; then
+  INSTALL_MODE=user; SHARE_DIR=$APPDIR
+else
+  INSTALL_MODE=repo; SHARE_DIR=$APPDIR
+fi
+PLUGINS_DIR=$HOME/.config/omarchy/plugins
+PLUGIN_ID=io.github.mattische.multicam
+PLUGIN_DIR=$PLUGINS_DIR/$PLUGIN_ID      # the bar indicator (Quickshell plugin, source: shell-plugin/)
+OLD_PLUGIN_ID=multicam.recording        # its predecessor in older versions; removed by setup-bar / uninstall
+OLD_PLUGIN_DIR=$PLUGINS_DIR/$OLD_PLUGIN_ID
 BG_DIR=$DATA_DIR/bg
 BG_PY=$BG_DIR/venv/bin/python
 BG_MODEL=$BG_DIR/rvm_mobilenetv3_fp32.onnx
 BG_SHA=88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828
 BG_URL=${MULTICAM_MODEL_URL:-https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx}
 RUNBASE=${XDG_RUNTIME_DIR:-/tmp}/multicam
-RUN=$RUNBASE   # byts till en sessionskatalog ($RUNBASE/s.<pid>) när TUI:t startar
+RUN=$RUNBASE   # switched to a session dir ($RUNBASE/s.<pid>) when the TUI starts
 PTR=/tmp/omarchy-screenrecord-filename
 LOGF=${MULTICAM_LOG:-}
-REV_FILE=$DATA_DIR/rev        # git-revision som installerades (skrivs av install.sh)
-SRC_FILE=$DATA_DIR/source     # git-URL som uppdateringar hämtas från (skrivs av install.sh)
+REV_FILE=$DATA_DIR/rev        # installed git revision (written by install.sh)
+SRC_FILE=$DATA_DIR/source     # git URL updates are fetched from (written by install.sh)
 DEFAULT_SRC=https://github.com/mattische/multicam.git
-RV=MC3_   # Lua-namn på fönsterreglerna; höj versionen när regeln ändras (gamla regler ligger kvar i Hyprland tills omstart)
+RV=MC3_   # Lua name of the window rules; bump the version when the rule changes (old rules stay in Hyprland until restart)
 
-# Texter: _ "text" [printf-argument...] (ett avslutande \n ger radbrytning)
+# Strings: _ "text" [printf args...] (a trailing \n adds a newline)
 _() { local s=$1 nl=''; shift; [[ $s == *'\n' ]] && { s=${s%'\n'}; nl='\n'; }; printf -- "$s$nl" "$@"; }
 
 log() { [[ -n $LOGF ]] && printf '%(%T)T %s\n' -1 "$*" >>"$LOGF"; return 0; }
@@ -39,7 +57,7 @@ bg_installed() { [[ -x $BG_PY && -f $BG_MODEL ]]; }
 refresh_indicator() { timeout 3 omarchy-shell -q omarchy.indicators refresh >/dev/null 2>&1; return 0; }
 
 ###############################################################################
-# Delade städfunktioner (används av TUI och av bakgrundsvakten)
+# Shared cleanup functions (used by the TUI and by the background watcher)
 ###############################################################################
 restore_mic() {
   local f=$RUN/orig_source o
@@ -50,7 +68,7 @@ restore_mic() {
   return 0
 }
 
-kill_own() { # dödar bara PID:er som multicam själv startat (pids-filen), aldrig efter namn
+kill_own() { # kills only PIDs multicam started itself (the pids file), never by name
   local p c list=()
   [[ -f $RUN/pids ]] || return 0
   while read -r p; do
@@ -72,7 +90,7 @@ kill_own() { # dödar bara PID:er som multicam själv startat (pids-filen), aldr
   : >"$RUN/pids"
 }
 
-cleanup_windows() { # idempotent: stänger bara klass ^Multicam[AB]$, stänger regler, dödar egna PID:er
+cleanup_windows() { # idempotent: closes only class ^Multicam[AB]$, disables rules, kills own PIDs
   local id
   for id in A B; do
     hc dispatch "hl.dsp.window.close({ window = \"class:^Multicam$id\$\" })"
@@ -82,20 +100,78 @@ cleanup_windows() { # idempotent: stänger bara klass ^Multicam[AB]$, stänger r
   rm -f "$RUN"/bgA.fifo "$RUN"/bgB.fifo
 }
 
-finish_recording() { # väntar in Omarchys slutbehandling och döper om filen (C4). Låsta, idempotent.
-  local src dst d t base n i
-  [[ -d $RUN ]] || return 1
-  if ! mkdir "$RUN/finish.lock" 2>/dev/null; then
-    for i in $(seq 300); do [[ -f $RUN/result ]] && return 0; sleep 0.1; done
-    return 1
+proc_draw() { [[ -n ${DRAW:-} ]] && ((IN_ALT && !HUPPED)) && processing_screen; return 0; }   # TUI only (not the watcher)
+
+ff_job() { # runs ffmpeg in the background (FJOB) so the TUI can show progress; returns its exit code
+  "$@" & FJOB=$!
+  while kill -0 "$FJOB" 2>/dev/null; do proc_draw; sleep 0.25; done
+  wait "$FJOB"; local rc=$?
+  FJOB=""
+  return $rc
+}
+
+follow_crop() { # window follow: crops the monitor recording to the window along $RUN/track; replaces src only on success
+  local src=$1 addr mon mx my mlw mlh ww wh ax ay t0 vw vh cw ch init tmp vf dev ok=1
+  read -r addr mon mx my mlw mlh ww wh ax ay t0 <"$RUN/follow" || return 1
+  IFS=x read -r vw vh < <(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "$src" 2>/dev/null)
+  [[ $vw =~ ^[0-9]+$ && $vh =~ ^[0-9]+$ && -s $RUN/track ]] || { log "follow: no video size/track"; return 1; }
+  ffprobe -v error -show_entries format=duration -of csv=p=0 "$src" >"$RUN/processing" 2>/dev/null
+  # physical px per logical px from the video itself (Omarchy scales monitors above 4K down)
+  read -r cw ch < <(awk -v a="$ww" -v b="$wh" -v vw="$vw" -v vh="$vh" -v w="$mlw" -v h="$mlh" 'BEGIN {
+    x = int(a * vw / w / 2) * 2; y = int(b * vh / h / 2) * 2
+    if (x > vw) x = vw - vw % 2; if (y > vh) y = vh - vh % 2; print x, y }')
+  init=$(awk -v t0="$t0" -v mx="$mx" -v my="$my" -v sx="$(awk -v a="$vw" -v b="$mlw" 'BEGIN { print a / b }')" \
+    -v sy="$(awk -v a="$vh" -v b="$mlh" 'BEGIN { print a / b }')" -v hx=$((vw - cw)) -v hy=$((vh - ch)) -v out="$RUN/crop.cmd" '
+    function ev(v, hi) { v = int(v / 2 + 0.5) * 2; hi -= hi % 2; if (v > hi) v = hi; if (v < 0) v = 0; return v }
+    { t = $1 - t0 - 0.1; if (t < 0) t = 0; x = ev(($2 - mx) * sx, hx); y = ev(($3 - my) * sy, hy)   # Omarchy trims 0.1 s
+      printf "%.3f crop x %d, crop y %d;\n", t, x, y > out; if (NR == 1) print x ":" y }' "$RUN/track")
+  [[ $init =~ ^[0-9]+:[0-9]+$ ]] || { log "follow: empty track"; return 1; }
+  tmp="${src%.mp4}-follow.mp4"
+  vf="sendcmd=f=$RUN/crop.cmd,crop=$cw:$ch:$init"
+  log "follow: $mon ${vw}x$vh -> ${cw}x$ch init $init ($(wc -l <"$RUN/track") positions)"
+  rm -f "$RUN/ffprog"
+  for dev in /dev/dri/renderD*; do   # hardware encoder first, libx264 as fallback
+    [[ -e $dev ]] || continue
+    ff_job ffmpeg -nostdin -y -v error -vaapi_device "$dev" -i "$src" -vf "$vf,format=nv12,hwupload" -map 0:v:0 -map '0:a?' \
+      -c:v h264_vaapi -qp 18 -c:a copy -progress "$RUN/ffprog" "$tmp" 2>>"${LOGF:-/dev/null}" && { ok=0; break; }
+  done
+  if ((ok)); then
+    log "follow: vaapi failed, using libx264"
+    ff_job ffmpeg -nostdin -y -v error -i "$src" -vf "$vf" -map 0:v:0 -map '0:a?' -c:v libx264 -preset veryfast -crf 18 \
+      -pix_fmt yuv420p -c:a copy -progress "$RUN/ffprog" "$tmp" 2>>"${LOGF:-/dev/null}" && ok=0
   fi
-  # klart = inspelaren borta OCH Omarchys stoppskript färdigt (pekarfilen borta)
+  if ((ok)) || [[ ! -s $tmp ]]; then rm -f "$tmp"; log "follow: ffmpeg failed, keeping the full-monitor recording"; return 1; fi
+  mv -f "$tmp" "$src"
+}
+
+finish_recording() { # waits for Omarchy's finalizing, crops a followed window, renames the file (C4). Locked, idempotent.
+  local src dst d t base n i h
+  [[ -d $RUN ]] || return 1
+  if ! mkdir "$RUN/finish.lock" 2>/dev/null; then   # someone else finishes: wait while it lives, take over if it died
+    for ((i = 0; ; i++)); do
+      [[ -f $RUN/result ]] && return 0
+      h=$(cat "$RUN/finish.lock/pid" 2>/dev/null)
+      if [[ $h == "$$" ]] || { [[ -n $h ]] && ! kill -0 "$h" 2>/dev/null; } || ((i > 50 && ${#h} == 0)); then
+        [[ -n $FJOB ]] && { kill "$FJOB" 2>/dev/null; wait "$FJOB" 2>/dev/null; FJOB=""; }
+        rm -rf "$RUN/finish.lock"; mkdir "$RUN/finish.lock" 2>/dev/null || return 1
+        break
+      fi
+      [[ -f $RUN/processing ]] && proc_draw
+      sleep 0.1
+    done
+  fi
+  echo $$ >"$RUN/finish.lock/pid"
+  # done = recorder gone AND Omarchy's stop script finished (pointer file gone)
   for i in $(seq 600); do
     gsr_running && { sleep 0.1; continue; }
     if [[ -f $PTR ]] && stop_proc_running; then sleep 0.1; continue; fi
     break
   done
   src=$(<"$RUN/recfile") 2>/dev/null
+  if [[ -n $src && -f $src && -f $RUN/follow ]]; then
+    follow_crop "$src" || touch "$RUN/follow.failed"
+    rm -f "$RUN/follow" "$RUN/processing" "$RUN/ffprog" "$RUN/crop.cmd"
+  fi
   if [[ -n $src && -f $src ]]; then
     base=${src##*/}; d=${src%/*}
     if [[ $base =~ ^screenrecording-([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})\.mp4$ ]]; then
@@ -106,17 +182,17 @@ finish_recording() { # väntar in Omarchys slutbehandling och döper om filen (C
     fi
     echo "$src" >"$RUN/result"
   else
-    echo "FEL" >"$RUN/result"
+    echo "ERROR" >"$RUN/result"
   fi
   rm -f "$RUNBASE/recording"
   log "finish: $(<"$RUN/result")"
 }
 
 ###############################################################################
-# Bakgrundsvakt (E4): startas efter att inspelaren bekräftats köra. Städar när
-# inspelaren försvinner, eller när TUI-processen försvinner/avslutar (HUP, kill).
+# Background watcher (E4): started once the recorder is confirmed running. Cleans up
+# when the recorder goes away, or when the TUI process goes away/quits (HUP, kill).
 ###############################################################################
-stop_bg() { # startar Omarchys stopp i bakgrunden, högst en gång per session (lås); sätter STOP_PID
+stop_bg() { # starts Omarchy's stop in the background, at most once per session (lock); sets STOP_PID
   STOP_PID=""
   mkdir "$RUN/stop.lock" 2>/dev/null || return 1
   OMARCHY_SCREENRECORD_DIR=${OMARCHY_SCREENRECORD_DIR:-${TMPDIR:-/tmp}} omarchy-capture-screenrecording --stop-recording >/dev/null 2>&1 &
@@ -124,19 +200,45 @@ stop_bg() { # startar Omarchys stopp i bakgrunden, högst en gång per session (
   return 0
 }
 
-cmd_watch() { # --watch <sessionkatalog> <tui-pid>
-  RUN=$1; local tui=$2
+FW=(); FLX=""; FLY=""; FOX=0; FOY=0
+track_step() { # window follow (~10 Hz in the watcher): logs the window position (clamped to the monitor) and moves the cameras along
+  local r k x y ox oy b=""
+  r=$(hyprctl clients -j 2>/dev/null | jq -r --arg a "${FW[0]}" '(first(.[]|select(.address==$a))|"W \(.at[0]) \(.at[1])"),
+    (.[]|select(.class|test("^Multicam[AB]$"))|"\(.class[-1:]) \(.at[0]) \(.at[1])")' 2>/dev/null)
+  read -r k x y <<<"$r"
+  [[ $k == W && $x =~ ^-?[0-9]+$ && $y =~ ^-?[0-9]+$ ]] || return 0   # window closed: keep the last position
+  ((x > FW[2] + FW[4] - FW[6])) && x=$((FW[2] + FW[4] - FW[6])); ((x < FW[2])) && x=${FW[2]}
+  ((y > FW[3] + FW[5] - FW[7])) && y=$((FW[3] + FW[5] - FW[7])); ((y < FW[3])) && y=${FW[3]}
+  [[ $x == "$FLX" && $y == "$FLY" ]] && return 0
+  FLX=$x; FLY=$y
+  echo "${EPOCHREALTIME/,/.} $x $y" >>"$RUN/track"
+  ox=$((x - FW[8])); oy=$((y - FW[9]))   # offset from where the window was picked (the cameras' reference)
+  if ((ox != FOX || oy != FOY)); then
+    while read -r k x y; do
+      [[ $k == [AB] ]] || continue
+      b+="dispatch hl.dsp.window.move({ window = \"class:^Multicam$k\$\", x = $((x + ox - FOX)), y = $((y + oy - FOY)) }); "
+    done <<<"$r"
+    [[ -n $b ]] && hyprctl --batch "$b" >/dev/null 2>&1
+    FOX=$ox; FOY=$oy
+    echo "$ox $oy" >"$RUN/winoff.tmp" && mv -f "$RUN/winoff.tmp" "$RUN/winoff"
+  fi
+}
+
+cmd_watch() { # --watch <session dir> <tui-pid>
+  RUN=$1; local tui=$2 fw=0
   [[ -d $RUN ]] || exit 0
   echo $$ >"$RUN/watcher.pid"
-  log "watcher up (tui=$tui)"
+  [[ -f $RUN/follow ]] && read -r -a FW <"$RUN/follow" && ((${#FW[@]} >= 11)) && fw=1
+  log "watcher up (tui=$tui follow=$fw)"
   while gsr_running; do
+    ((fw)) && track_step
     if [[ -f $RUN/quit ]] || ! kill -0 "$tui" 2>/dev/null; then
-      log "watcher: TUI borta/avslutar medan inspelning pågår -> stoppar"
+      log "watcher: TUI gone/quitting while recording -> stopping"
       stop_bg
       break
     fi
-    if stop_proc_running; then   # Alt+Print / klick / --stop-recording: städa direkt, inspelaren behöver en stund för att avsluta
-      log "watcher: Omarchys stoppskript körs"
+    if stop_proc_running; then   # Alt+Print / click / --stop-recording: clean up now, the recorder needs a moment to exit
+      log "watcher: Omarchy's stop script is running"
       break
     fi
     sleep 0.1
@@ -152,38 +254,144 @@ cmd_watch() { # --watch <sessionkatalog> <tui-pid>
 }
 
 ###############################################################################
-# Installation / avinstallation
+# Install / uninstall
 ###############################################################################
-cmd_uninstall() {
-  local yes=0 a
+conf_set() { # KEY VALUE: sets one key in the config file (for commands that run outside the TUI)
+  mkdir -p "$CONF_DIR" || return 1
+  { grep -v "^$1=" "$CONF" 2>/dev/null; printf '%s=%s\n' "$1" "$2"; } >"$CONF.tmp" && mv -f "$CONF.tmp" "$CONF"
+}
+
+shell_ipc_ok() { # 0 = the running Omarchy shell may be told about plugin changes
+  # The shell reads the plugins of the real home folder. With another HOME (tests, scratch copies) enable/disable/rescan
+  # would act on the user's real bar, so they are skipped there.
+  need omarchy && need omarchy-shell || return 1
+  local h
+  h=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)
+  [[ -n $h && $HOME -ef $h ]]
+}
+
+plugin_drop() { # ID DIR: disables a bar plugin in the shell and deletes only its folder
+  [[ -d $2 ]] || return 0
+  shell_ipc_ok && timeout 5 omarchy plugin disable "$1" >/dev/null 2>&1
+  rm -rf -- "$2"
+}
+
+plugin_rescan() { shell_ipc_ok && timeout 5 omarchy-shell shell rescanPlugins >/dev/null 2>&1; return 0; }
+
+plugin_stale() { # 0 = a plain copy of the plugin (not a git checkout) differs from the files shipped with the app
+  local f
+  [[ -d $PLUGIN_DIR && ! -d $PLUGIN_DIR/.git && -d $SHARE_DIR/shell-plugin ]] || return 1
+  for f in "$SHARE_DIR"/shell-plugin/*; do cmp -s -- "$f" "$PLUGIN_DIR/${f##*/}" || return 0; done
+  return 1
+}
+
+cmd_setup_bar() { # [--remove]: installs/enables the bar indicator plugin for this user, or removes it
+  local a remove=0 noconf=0
+  for a in "$@"; do
+    case $a in
+      --remove) remove=1 ;;
+      --no-config) noconf=1 ;;   # internal: the TUI records the state itself
+      *) _ 'Unknown option: %s\n' "$a" >&2; return 2 ;;
+    esac
+  done
+  # the old, non-namespaced indicator would show a second icon
+  [[ -d $OLD_PLUGIN_DIR ]] && { plugin_drop "$OLD_PLUGIN_ID" "$OLD_PLUGIN_DIR"; _ 'Removed the old bar plugin %s.\n' "$OLD_PLUGIN_ID"; }
+  if ((remove)); then
+    if [[ -d $PLUGIN_DIR ]]; then plugin_drop "$PLUGIN_ID" "$PLUGIN_DIR"; plugin_rescan; _ 'Bar plugin removed.\n'
+    else _ 'The bar plugin is not installed.\n'; fi
+    ((noconf)) || conf_set BAR_PLUGIN off   # remembered: the package does not add it again at start
+    return 0
+  fi
+  if [[ ! -d $HOME/.config/omarchy ]] || ! need omarchy-shell; then
+    _ 'Omarchy shell not found - the bar plugin was not installed.\n' >&2; return 1
+  fi
+  [[ -f $SHARE_DIR/shell-plugin/manifest.json ]] || { _ 'Plugin files not found in %s\n' "$SHARE_DIR/shell-plugin" >&2; return 1; }
+  if [[ -d $PLUGIN_DIR/.git ]]; then
+    _ '%s is a git checkout (omarchy plugin add); update it with: omarchy plugin update %s\n' "$PLUGIN_DIR" "$PLUGIN_ID"
+  else
+    mkdir -p "$PLUGIN_DIR" && cp -- "$SHARE_DIR"/shell-plugin/* "$PLUGIN_DIR"/ || { _ 'Could not copy the plugin to %s\n' "$PLUGIN_DIR" >&2; return 1; }
+  fi
+  ((noconf)) || conf_set BAR_PLUGIN on
+  if ! shell_ipc_ok; then
+    _ 'Bar plugin installed in %s; enable it with: omarchy plugin enable %s\n' "$PLUGIN_DIR" "$PLUGIN_ID"
+    return 0
+  fi
+  plugin_rescan
+  if timeout 10 omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
+    _ 'Bar indicator enabled (blinking red icon while recording, click stops).\n'
+  else
+    _ 'Bar plugin installed in %s; enable it with: omarchy plugin enable %s\n' "$PLUGIN_DIR" "$PLUGIN_ID"
+  fi
+}
+
+keybind_cmd() { # the command the keybind starts
+  if [[ $INSTALL_MODE == package ]]; then echo multicam
+  elif [[ -x $BIN_LINK ]]; then echo "$BIN_LINK"
+  else echo "$SELF"; fi
+}
+
+remove_keybind() { # removes only the keybind itself (even if it ended up after other text on the same line)
+  [[ -f $BINDINGS ]] && grep -q -- '-- multicam$' "$BINDINGS" || return 1
+  sed -i --follow-symlinks '/-- multicam$/{s/[[:space:]]*o\.bind("[^"]*", "Multicam", "[^"]*") -- multicam$//;/^[[:space:]]*$/d}' "$BINDINGS"
+}
+
+cmd_setup_keybind() { # [--remove]: adds SUPER + ALT + M to ~/.config/hypr/bindings.lua (one line ending in -- multicam)
+  local a
+  for a in "$@"; do
+    case $a in
+      --remove) if remove_keybind; then _ 'Shortcut removed.\n'; else _ 'No multicam shortcut found.\n'; fi; return 0 ;;
+      *) _ 'Unknown option: %s\n' "$a" >&2; return 2 ;;
+    esac
+  done
+  if [[ ! -f $BINDINGS ]]; then
+    _ 'Could not find %s - no shortcut added.\n' "$BINDINGS"; return 1
+  elif grep -q -- '-- multicam$' "$BINDINGS"; then
+    _ 'The shortcut already exists.\n'
+  elif grep -q "\"$KEYCOMBO\"" "$BINDINGS"; then
+    _ '%s is already used in %s - no shortcut added.\n' "$KEYCOMBO" "$BINDINGS"; return 1
+  else
+    # make sure our line starts on its own line (the file may lack a trailing newline)
+    [[ -s $BINDINGS && -n $(tail -c1 "$BINDINGS") ]] && echo >>"$BINDINGS"
+    printf 'o.bind("%s", "Multicam", "omarchy-launch-tui --app-id=TUI.float %s") -- multicam\n' "$KEYCOMBO" "$(keybind_cmd)" >>"$BINDINGS"
+    _ "Shortcut %s added (the line ends with '-- multicam').\n" "$KEYCOMBO"
+  fi
+}
+
+cmd_uninstall() { # removes the per-user files; a pacman package itself is removed with pacman
+  local yes=0 a it d
   for a in "$@"; do [[ $a == --yes || $a == -y ]] && yes=1; done
-  _ 'multicam will remove:\n' 
-  local items=("$BIN_LINK" "$DATA_DIR" "$CONF_DIR" "$DESKTOP")
-  local it
+  _ 'multicam will remove:\n'
+  local items=("$BIN_LINK" "$DATA_DIR" "$CONF_DIR" "$DESKTOP" "$ICON")
   for it in "${items[@]}"; do [[ -e $it || -L $it ]] && echo "  $it"; done
   grep -q -- '-- multicam$' "$BINDINGS" 2>/dev/null && _ '  the line ending in -- multicam in %s\n' "$BINDINGS"
-  [[ -d $PLUGIN_DIR ]] && _ '  the bar indicator plugin %s\n' "$PLUGIN_DIR"
-  _ 'Recordings in Videos are left alone.\n' 
+  for d in "$PLUGIN_DIR" "$OLD_PLUGIN_DIR"; do [[ -d $d ]] && _ '  the bar indicator plugin %s\n' "$d"; done
+  _ 'Recordings in Videos are left alone.\n'
+  [[ $INSTALL_MODE == package ]] && _ '%s (the package) is not touched.\n' "$SELF"
   if ((!yes)); then
     read -r -p "$(_ 'Continue? [y/N] ')" a
     [[ $a == [jJyY]* ]] || { _ 'Cancelled.\n'; return 1; }
   fi
   [[ -L $BIN_LINK || -f $BIN_LINK ]] && rm -f "$BIN_LINK"
   rm -rf "$DATA_DIR" "$CONF_DIR"
-  rm -f "$DESKTOP"
-  if [[ -d $PLUGIN_DIR ]]; then
-    need omarchy && timeout 5 omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1
-    rm -rf "$PLUGIN_DIR"
-    need omarchy-shell && timeout 5 omarchy-shell shell rescanPlugins >/dev/null 2>&1
+  rm -f "$DESKTOP" "$ICON"
+  # the icon folders only if they are empty now (install.sh may have created them)
+  d=${ICON%/*}
+  for it in apps scalable hicolor icons; do rmdir "$d" 2>/dev/null || break; d=${d%/*}; done
+  if [[ -d $PLUGIN_DIR || -d $OLD_PLUGIN_DIR ]]; then
+    plugin_drop "$PLUGIN_ID" "$PLUGIN_DIR"
+    plugin_drop "$OLD_PLUGIN_ID" "$OLD_PLUGIN_DIR"
+    plugin_rescan
   fi
-  if [[ -f $BINDINGS ]] && grep -q -- '-- multicam$' "$BINDINGS"; then
-    # tar bara bort själva genvägen (även om den hamnat efter annan text på samma rad)
-    sed -i --follow-symlinks '/-- multicam$/{s/[[:space:]]*o\.bind("[^"]*", "Multicam", "[^"]*") -- multicam$//;/^[[:space:]]*$/d}' "$BINDINGS"
+  remove_keybind
+  if [[ $INSTALL_MODE == package ]]; then
+    _ 'Per-user files removed. Remove the program itself with:  sudo pacman -Rns multicam\n'
+  else
+    _ 'Done.\n'
   fi
-  _ 'Done.\n'
+  return 0
 }
 
-bg_verify() { # 0 = modellen finns och har rätt SHA256
+bg_verify() { # 0 = the model exists and has the right SHA256
   local s
   [[ -f $BG_MODEL ]] || return 1
   s=$(sha256sum "$BG_MODEL" | cut -d' ' -f1)
@@ -227,13 +435,15 @@ cmd_uninstall_bgremove() {
 }
 
 cmd_check_bgremove() {
+  [[ -f $SHARE_DIR/lib/bg.py ]] || { _ 'ERROR: %s is missing (broken installation)\n' "$SHARE_DIR/lib/bg.py" >&2; return 1; }
+  _ 'bg.py: %s\n' "$SHARE_DIR/lib/bg.py"
   if bg_verify; then _ 'ok: SHA256 matches\n'; else _ 'ERROR: the model is missing or has the wrong SHA256\n' >&2; return 1; fi
 }
 
-# Uppdatering: jämför installerad git-revision (REV_FILE) med origin/main, hämtar och kör install.sh från en ny klon.
-cmd_stop() { # stoppar en pågående inspelning (som klick på bar-ikonen); multicam städar och visas igen
+# Update: compares the installed git revision (REV_FILE) with origin/main, fetches and runs install.sh from a fresh clone.
+cmd_stop() { # stops a running recording (like clicking the bar icon); multicam cleans up and shows again
   pgrep -f '^gpu-screen-recorder' >/dev/null || { _ 'No recording is running.\n'; return 1; }
-  # Omarchys skript avbryter om dess utmapp (~/Videos) saknas, även vid stopp; stoppet använder bara pekarfilen
+  # Omarchy's script aborts if its output folder (~/Videos) is missing, even on stop; stopping only uses the pointer file
   OMARCHY_SCREENRECORD_DIR=${OMARCHY_SCREENRECORD_DIR:-${TMPDIR:-/tmp}} \
     setsid -f omarchy-capture-screenrecording --stop-recording >/dev/null 2>&1 </dev/null
   return 0
@@ -241,15 +451,32 @@ cmd_stop() { # stoppar en pågående inspelning (som klick på bar-ikonen); mult
 
 update_src() { if [[ -s $SRC_FILE ]]; then cat "$SRC_FILE"; else echo "$DEFAULT_SRC"; fi; }
 latest_rev() { GIT_TERMINAL_PROMPT=0 timeout 10 git ls-remote "$(update_src)" refs/heads/main 2>/dev/null | cut -f1; }
-update_available() { # 0 = ny version finns
+latest_tag() { # newest vX.Y.Z release tag of the public repository, without the v (package mode)
+  GIT_TERMINAL_PROMPT=0 timeout 10 git ls-remote --tags --refs "$DEFAULT_SRC" 'v*' 2>/dev/null |
+    sed -n 's|.*refs/tags/v\([0-9][0-9.]*\)$|\1|p' | sort -V | tail -n1
+}
+PKG_UPDATE_CMD='yay -Syu multicam'
+UPD_NEW=""
+update_available() { # 0 = a new version exists; UPD_NEW = the new version (package) or revision (git install)
   local cur new
-  need git && [[ -s $REV_FILE ]] || return 1
+  need git || return 1
+  if [[ $INSTALL_MODE == package ]]; then   # a pacman install compares its VERSION with the newest release tag
+    new=$(latest_tag)
+    [[ -n $new && $new != "$VERSION" && $(printf '%s\n%s\n' "$VERSION" "$new" | sort -V | tail -n1) == "$new" ]] || return 1
+    UPD_NEW=$new; return 0
+  fi
+  [[ -s $REV_FILE ]] || return 1
   cur=$(<"$REV_FILE"); new=$(latest_rev)
-  [[ -n $new && $new != "$cur" ]]
+  [[ -n $new && $new != "$cur" ]] || return 1
+  UPD_NEW=$new
 }
 
 cmd_update() {
   local yes=0 a tmp cur new
+  if [[ $INSTALL_MODE == package ]]; then
+    _ 'multicam was installed as a package. Update it with your AUR helper, e.g.:  %s\n' "$PKG_UPDATE_CMD" >&2
+    return 1
+  fi
   for a in "$@"; do [[ $a == --yes || $a == -y ]] && yes=1; done
   need git || { _ 'git is missing.\n' >&2; return 1; }
   [[ -s $REV_FILE ]] || { _ 'This copy was not installed from a git checkout (run install.sh from a clone first).\n' >&2; return 1; }
@@ -262,7 +489,9 @@ cmd_update() {
     [[ $a == [jJyY]* ]] || { _ 'Cancelled.\n'; return 1; }
   fi
   tmp=$(mktemp -d) || return 1
-  if GIT_TERMINAL_PROMPT=0 git clone -q --depth 1 -b main "$(update_src)" "$tmp/src" && "$tmp/src/install.sh" --yes $(bg_installed || echo --no-bgremove) $([[ -d $PLUGIN_DIR ]] || echo --no-bar-indicator); then   # tillägg: behåll nuvarande läge
+  # add-ons keep their current state: no add-on / no bar plugin (also the old one counts) -> not added by the update
+  if GIT_TERMINAL_PROMPT=0 git clone -q --depth 1 -b main "$(update_src)" "$tmp/src" &&
+    "$tmp/src/install.sh" --yes $(bg_installed || echo --no-bgremove) $([[ -d $PLUGIN_DIR || -d $OLD_PLUGIN_DIR ]] || echo --no-bar-indicator); then
     rm -rf "$tmp"
     _ 'Updated. Settings, keybind and the background-removal add-on are kept.\n'
   else
@@ -271,13 +500,15 @@ cmd_update() {
 }
 
 usage() {
-  _ 'multicam %s - screen + up to two cameras + microphone to MP4\n\n  multicam                     start the TUI\n  multicam stop                stop a running recording (same as clicking the bar icon)\n  multicam update              update to the latest version [--yes]\n  multicam check-update        exit 0 if an update is available\n  multicam install-bgremove    install the background-removal add-on [--yes]\n  multicam uninstall-bgremove  remove the add-on\n  multicam check-bgremove      verify the model SHA256\n  multicam uninstall           remove multicam [--yes]\n  multicam --version, --help\n\nEnvironment: MULTICAM_OUTPUT_DIR (output folder, default Omarchy, ~/Videos), MULTICAM_LOG=file,\n  MULTICAM_NO_UPDATE_CHECK=1 (no update check at start)\n' "$VERSION"
+  _ 'multicam %s - screen + up to two cameras + microphone to MP4\n\n  multicam                     start the TUI\n  multicam stop                stop a running recording (same as clicking the bar icon)\n  multicam update              update to the latest version [--yes] (package: use yay -Syu multicam)\n  multicam check-update        exit 0 if an update is available\n  multicam install-bgremove    install the background-removal add-on [--yes]\n  multicam uninstall-bgremove  remove the add-on\n  multicam check-bgremove      verify the model SHA256\n  multicam setup-bar           install + enable the bar indicator plugin [--remove]\n  multicam setup-keybind       add SUPER + ALT + M to ~/.config/hypr/bindings.lua [--remove]\n  multicam uninstall           remove multicam (package: only the per-user files) [--yes]\n  multicam --version, --help\n\nEnvironment: MULTICAM_OUTPUT_DIR (output folder, default Omarchy, ~/Videos), MULTICAM_LOG=file,\n  MULTICAM_NO_UPDATE_CHECK=1 (no update check at start)\n' "$VERSION"
 }
 
 case ${1:-} in
   --watch) shift; cmd_watch "$@"; exit $? ;;
   uninstall) shift; cmd_uninstall "$@"; exit $? ;;
   update) shift; cmd_update "$@"; exit $? ;;
+  setup-bar) shift; cmd_setup_bar "$@"; exit $? ;;
+  setup-keybind) shift; cmd_setup_keybind "$@"; exit $? ;;
   stop) cmd_stop; exit $? ;;
   check-update) update_available; exit $? ;;
   install-bgremove) shift; cmd_install_bgremove "$@"; exit $? ;;
@@ -294,17 +525,18 @@ esac
 ###############################################################################
 STEP=20; BIG=100; MARGIN=20; MINS=120
 PRESETS=(ff3399 ff0000 ff9900 ffee00 00cc66 00aaff 6644ff ffffff)
-declare -A C            # per kamera: C[A.dev] .name .shape .ring .color .thick .bg .rx .ry .size .missing .sdev .sname
-declare -A CP PP        # mpv-PID och python-PID per kamera
+declare -A C            # per camera: C[A.dev] .name .shape .ring .color .thick .bg .rx .ry .size .missing .sdev .sname
+declare -A CP PP        # mpv PID and python PID per camera
 CAMS=(A B)
 MIC=""; MIC_DESC=""; MIC_MISSING=""; DAUDIO=on; SCREEN=""; SCREEN_MISSING=""
 UPDCHECK=on
-OUTDIR=""; HIDE_WIN=on; BAR_IND=on; AFTER=ask   # inställningsvyn (S)
+BAR_PLUGIN=""   # bar plugin setup: "" never done, on = installed by multicam, off = removed by the user (setup-bar --remove)
+OUTDIR=""; HIDE_WIN=on; BAR_IND=on; AFTER=ask; COUNTDOWN=3; FOLLOW=on   # the settings view (S)
 WIN_HIDDEN=0
 CAPTURE=screen   # screen | region | window
-AX=0; AY=0; AW=0; AH=0; AREA_LABEL=""; PICK_PID=""
-LAST_AREA=""; AREA_REUSE=on; FORCE_PICK=0   # senast valda område (X,Y,W,H) och om det återanvänds
-GEOM=""     # vilken sparad uppsättning positioner kamerorna just nu använder: screen | area (tom = ingen förhandsvisning än)
+AX=0; AY=0; AW=0; AH=0; AREA_LABEL=""; PICK_PID=""; WIN_ADDR=""; FOLLOWING=0; FMON=""
+LAST_AREA=""; AREA_REUSE=on; FORCE_PICK=0   # last chosen area (X,Y,W,H) and whether it is reused
+GEOM=""     # which saved set of positions the cameras currently use: screen | area (empty = no preview yet)
 DEVS=(); DEVNAMES=(); MICS=(); MICDESC=(); MONS=()
 MODE=move; SEL=0; REC=0; REC_START=0; CLEANED=0; DIRTY=0; MSG=""; PROMPT=""
 UPDATED=0; SCR=form; ROW=0; STTY=""; MON=""; MX=0; MY=0; MW=0; MH=0; IN_ALT=0
@@ -341,6 +573,7 @@ load_config() {
       DESKTOP_AUDIO) [[ $v == on || $v == off ]] && DAUDIO=$v ;;
       SCREEN) SCREEN=$v ;;
       UPDATE_CHECK) [[ $v == on || $v == off ]] && UPDCHECK=$v ;;
+      BAR_PLUGIN) [[ $v == on || $v == off ]] && BAR_PLUGIN=$v ;;
       OUTPUT_DIR) OUTDIR=$v ;;
       HIDE_WINDOW) [[ $v == on || $v == off ]] && HIDE_WIN=$v ;;
       BAR_INDICATOR) [[ $v == on || $v == off ]] && BAR_IND=$v ;;
@@ -348,13 +581,15 @@ load_config() {
       MOVE_STEP) [[ $v =~ ^[0-9]+$ ]] && ((v >= 5 && v <= 100)) && STEP=$v ;;
       BIG_STEP) [[ $v =~ ^[0-9]+$ ]] && ((v >= 25 && v <= 400)) && BIG=$v ;;
       CAPTURE) [[ $v == screen || $v == region || $v == window ]] && CAPTURE=$v ;;
+      COUNTDOWN) [[ $v == off || $v == 3 || $v == 5 || $v == 10 ]] && COUNTDOWN=$v ;;
+      FOLLOW_WINDOW) [[ $v == on || $v == off ]] && FOLLOW=$v ;;
     esac
   done <"$CONF"
-  # positioner/storlek finns i två uppsättningar: hel skärm (s*) och område/fönster (a*, relativt området)
+  # positions/size come in two sets: full screen (s*) and area/window (a*, relative to the area)
   for id in "${CAMS[@]}"; do C[$id.srx]=${C[$id.rx]}; C[$id.sry]=${C[$id.ry]}; C[$id.ssize]=${C[$id.size]}; done
 }
 
-sync_geom() { # för över kamerornas aktuella position/storlek till den uppsättning de hör till
+sync_geom() { # copies the cameras' current position/size into the set they belong to
   local id p=s
   [[ -n $GEOM ]] || return 0
   [[ $GEOM == area ]] && p=a
@@ -365,7 +600,7 @@ sync_geom() { # för över kamerornas aktuella position/storlek till den uppsät
   done
 }
 
-use_geom() { # use_geom screen|area: hämtar den sparade uppsättningen till kamerornas aktuella värden
+use_geom() { # use_geom screen|area: loads the saved set into the cameras' current values
   local id p=s
   GEOM=$1; [[ $GEOM == area ]] && p=a
   for id in "${CAMS[@]}"; do
@@ -375,7 +610,7 @@ use_geom() { # use_geom screen|area: hämtar den sparade uppsättningen till kam
   done
 }
 
-save_config() { # skrivs direkt vid varje ändring (och vid avslut), så nästa start får samma inställningar
+save_config() { # written right away on every change (and on quit), so the next start gets the same settings
   [[ -n ${C[A.shape]:-} ]] || return 0
   mkdir -p "$CONF_DIR" || return 0
   sync_geom
@@ -383,7 +618,7 @@ save_config() { # skrivs direkt vid varje ändring (och vid avslut), så nästa 
   {
     for id in "${CAMS[@]}"; do
       dev=${C[$id.dev]}; name=${C[$id.name]}
-      if [[ -z $dev && -n ${C[$id.missing]} ]]; then dev=${C[$id.sdev]}; name=${C[$id.sname]}; fi  # B5: saknad enhet behålls
+      if [[ -z $dev && -n ${C[$id.missing]} ]]; then dev=${C[$id.sdev]}; name=${C[$id.sname]}; fi  # B5: a missing device is kept
       printf 'CAM_%s_DEV=%s\nCAM_%s_NAME=%s\nCAM_%s_SHAPE=%s\nCAM_%s_RING=%s\nCAM_%s_COLOR=%s\nCAM_%s_THICK=%s\nCAM_%s_BG=%s\nCAM_%s_SIZE=%s\n' \
         "$id" "$dev" "$id" "$name" "$id" "${C[$id.shape]}" "$id" "${C[$id.ring]}" "$id" "${C[$id.color]}" \
         "$id" "${C[$id.thick]}" "$id" "${C[$id.bg]}" "$id" "${C[$id.ssize]:-240}"
@@ -396,8 +631,9 @@ save_config() { # skrivs direkt vid varje ändring (och vid avslut), så nästa 
     printf 'MIC=%s\nMIC_DESC=%s\nDESKTOP_AUDIO=%s\n' "$mic" "$desc" "$DAUDIO"
     scr=$SCREEN; [[ -n $SCREEN_MISSING ]] && scr=$SCREEN_MISSING
     printf 'SCREEN=%s\nCAPTURE=%s\nLAST_AREA=%s\nAREA_REUSE=%s\nUPDATE_CHECK=%s\n' "$scr" "$CAPTURE" "$LAST_AREA" "$AREA_REUSE" "$UPDCHECK"
-    printf 'OUTPUT_DIR=%s\nHIDE_WINDOW=%s\nBAR_INDICATOR=%s\nAFTER_RECORDING=%s\nMOVE_STEP=%s\nBIG_STEP=%s\n' \
-      "$OUTDIR" "$HIDE_WIN" "$BAR_IND" "$AFTER" "$STEP" "$BIG"
+    [[ -n $BAR_PLUGIN ]] && printf 'BAR_PLUGIN=%s\n' "$BAR_PLUGIN"
+    printf 'OUTPUT_DIR=%s\nHIDE_WINDOW=%s\nBAR_INDICATOR=%s\nAFTER_RECORDING=%s\nMOVE_STEP=%s\nBIG_STEP=%s\nCOUNTDOWN=%s\nFOLLOW_WINDOW=%s\n' \
+      "$OUTDIR" "$HIDE_WIN" "$BAR_IND" "$AFTER" "$STEP" "$BIG" "$COUNTDOWN" "$FOLLOW"
   } >"$CONF.tmp" && mv "$CONF.tmp" "$CONF"
   DIRTY=0
 }
@@ -436,12 +672,12 @@ list_mics() {
 
 list_monitors() { mapfile -t MONS < <(hyprctl monitors -j 2>/dev/null | jq -r '.[]|"\(.name)\t\(.width)x\(.height)\t\(.focused)"'); }
 
-resolve_saved() { # B5: sparade enheter som saknas markeras, ersätts aldrig tyst
+resolve_saved() { # B5: saved devices that are missing are flagged, never silently replaced
   local id i found n d claimed=" "
   for id in "${CAMS[@]}"; do
     C[$id.sdev]=${C[$id.dev]}; C[$id.sname]=${C[$id.name]}
   done
-  # 1) exakt träff på sökväg OCH namn (så två likadana kameror inte slås ihop)
+  # 1) exact match on path AND name (so two identical cameras are not merged)
   for id in "${CAMS[@]}"; do
     n=${C[$id.sname]}; d=${C[$id.sdev]}; C[$id.rdev]=""
     [[ -z $d && -z $n ]] && continue
@@ -451,7 +687,7 @@ resolve_saved() { # B5: sparade enheter som saknas markeras, ersätts aldrig tys
       fi
     done
   done
-  # 2) träff på namn bland enheter som ingen annan kamera tagit
+  # 2) match on name among devices no other camera has taken
   for id in "${CAMS[@]}"; do
     n=${C[$id.sname]}; d=${C[$id.sdev]}
     [[ -z $d && -z $n ]] && continue
@@ -472,7 +708,7 @@ resolve_saved() { # B5: sparade enheter som saknas markeras, ersätts aldrig tys
     else C[$id.missing]=${n:-$d}; C[$id.dev]=""; C[$id.name]=""; fi
   done
   if [[ ${C[A.dev]} && ${C[A.dev]} == "${C[B.dev]}" ]]; then C[B.dev]=""; C[B.name]=""; fi
-  # mikrofon
+  # microphone
   if [[ $MIC == __default__ ]]; then
     local d; d=$(pactl get-default-source 2>/dev/null)
     MIC=""
@@ -483,7 +719,7 @@ resolve_saved() { # B5: sparade enheter som saknas markeras, ersätts aldrig tys
     if [[ -n $found ]]; then MIC_DESC=${MICDESC[$found]}
     else MIC_MISSING=$MIC; MIC=""; MIC_DESC=""; fi
   fi
-  # skärm
+  # screen
   if [[ -n $SCREEN ]]; then
     local m ok=""
     for m in "${MONS[@]}"; do [[ ${m%%$'\t'*} == "$SCREEN" ]] && ok=1; done
@@ -491,7 +727,7 @@ resolve_saved() { # B5: sparade enheter som saknas markeras, ersätts aldrig tys
   fi
 }
 
-load_geom() { # sätter MON MX MY MW MH (logiska px, minus reserverat fält) för SCREEN eller fokuserad
+load_geom() { # sets MON MX MY MW MH (logical px, minus reserved area) for SCREEN or the focused one
   local r
   r=$(hyprctl monitors -j 2>/dev/null | jq -r --arg n "$SCREEN" '(if $n=="" then first(.[]|select(.focused)) else first(.[]|select(.name==$n)) end)
     | (if .transform % 2 == 1 then [.height, .width] else [.width, .height] end) as [$w, $h]
@@ -501,11 +737,11 @@ load_geom() { # sätter MON MX MY MW MH (logiska px, minus reserverat fält) fö
 }
 
 ###############################################################################
-# Geometri
+# Geometry
 ###############################################################################
 CW=0
 cam_w() { if [[ ${C[$1.shape]} == circle ]]; then CW=${C[$1.size]}; else CW=$((C[$1.size] * 16 / 9)); fi; }
-max_size() { # största tillåtna höjd för kameran
+max_size() { # largest allowed height for the camera
   local m
   if [[ ${C[$1.shape]} == circle ]]; then m=$((MW < MH ? MW : MH)); else m=$((MW * 9 / 16)); ((m > MH)) && m=$MH; fi
   echo "$m"
@@ -522,21 +758,21 @@ clamp_cam() {
   ((C[$id.rx] < 0)) && C[$id.rx]=0
   ((C[$id.ry] < 0)) && C[$id.ry]=0
 }
-preset_pos() { # numpad-layout: 7 8 9 / 4 5 6 / 1 2 3
+preset_pos() { # numpad layout: 7 8 9 / 4 5 6 / 1 2 3
   local id=$1 n=$2 col row
   col=$(((n - 1) % 3)); row=$((2 - (n - 1) / 3))
   cam_w "$id"
   C[$id.rx]=$((MARGIN + col * (MW - 2 * MARGIN - CW) / 2))
   C[$id.ry]=$((MARGIN + row * (MH - 2 * MARGIN - C[$id.size]) / 2))
 }
-resize_pct() { # ±pct % runt bildens mitt
+resize_pct() { # ±pct % around the image centre
   local id=$1 pct=$2 old new oldw cx cy
   old=${C[$id.size]}; cam_w "$id"; oldw=$CW
   new=$((old + old * pct / 100))
   ((new == old)) && new=$((old + (pct > 0 ? 1 : -1)))
   cx=$((C[$id.rx] + oldw / 2)); cy=$((C[$id.ry] + old / 2))
   C[$id.size]=$new
-  clamp_cam "$id"      # begränsar storleken
+  clamp_cam "$id"      # limits the size
   cam_w "$id"
   C[$id.rx]=$((cx - CW / 2)); C[$id.ry]=$((cy - C[$id.size] / 2))
   clamp_cam "$id"
@@ -553,15 +789,18 @@ default_layout() {
   done
 }
 
-apply_cam() { # en samlad hyprctl-anrop
+OX=0; OY=0
+win_off() { OX=0; OY=0; ((FOLLOWING)) && [[ -f $RUN/winoff ]] && read -r OX OY <"$RUN/winoff"; return 0; }   # how far the followed window moved
+
+apply_cam() { # one batched hyprctl call
   local id=$1 s=${C[$1.size]} r=0 b=0 col w h
-  cam_w "$id"; w=$CW; h=$s
+  cam_w "$id"; w=$CW; h=$s; win_off
   local sel="class:^Multicam$id\$"
   [[ ${C[$id.shape]} == circle ]] && r=$((s / 2))
   [[ ${C[$id.ring]} == on ]] && b=${C[$id.thick]}
   col="rgba(${C[$id.color]#\#}ff)"
   hyprctl --batch "dispatch hl.dsp.window.resize({ window = \"$sel\", x = $w, y = $h }); \
-dispatch hl.dsp.window.move({ window = \"$sel\", x = $((MX + C[$id.rx])), y = $((MY + C[$id.ry])) }); \
+dispatch hl.dsp.window.move({ window = \"$sel\", x = $((MX + C[$id.rx] + OX)), y = $((MY + C[$id.ry] + OY)) }); \
 dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"rounding\", value = $r }); \
 dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"border_size\", value = $b }); \
 dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"inactive_border_color\", value = \"$col\" }); \
@@ -569,11 +808,11 @@ dispatch hl.dsp.window.set_prop({ window = \"$sel\", prop = \"active_border_colo
 }
 
 ###############################################################################
-# Kameror (mpv)
+# Cameras (mpv)
 ###############################################################################
-pick_size() { # pick_size <enhet> <bg:on|off> -> "BxH [input_format]"
-  # vanlig kamera: 1280x720 (skarpare), annars 640x360/640x480; bg-borttagning: 640x360 först (CPU).
-  # Ett format/storlek räknas bara om det klarar >=25 fps; MJPG föredras (C920 ger bara ~10 fps i YUYV vid 720p).
+pick_size() { # pick_size <device> <bg:on|off> -> "BxH [input_format]"
+  # plain camera: 1280x720 (sharper), else 640x360/640x480; background removal: 640x360 first (CPU).
+  # A format/size only counts if it manages >=25 fps; MJPG is preferred (C920 gives only ~10 fps in YUYV at 720p).
   local tab order sz fmt best_fmt first
   tab=$(v4l2-ctl --list-formats-ext -d "$1" 2>/dev/null | awk '
     /^[[:space:]]*\[[0-9]+\]:/ { match($0, /\x27[^\x27]+\x27/); fmt = substr($0, RSTART + 1, RLENGTH - 2) }
@@ -586,7 +825,7 @@ pick_size() { # pick_size <enhet> <bg:on|off> -> "BxH [input_format]"
     for fmt in MJPG YUYV NV12 YU12 H264; do
       awk -v k="$fmt $sz" '$0 ~ "^" k " " && $3 >= 25 { ok = 1 } END { exit !ok }' <<<"$tab" && { best_fmt=$fmt; break; }
     done
-    if [[ -z $best_fmt ]]; then   # okänt format med tillräckligt hög fps
+    if [[ -z $best_fmt ]]; then   # unknown format with high enough fps
       best_fmt=$(awk -v s="$sz" '$2 == s && $3 >= 25 { print $1; exit }' <<<"$tab")
     fi
     if [[ -n $best_fmt ]]; then
@@ -631,7 +870,7 @@ launch_cam() {
   if [[ $bgon == on ]]; then
     local fifo=$RUN/bg$id.fifo
     rm -f "$fifo"; mkfifo "$fifo"
-    setsid "$BG_PY" "$APPDIR/lib/bg.py" --dev "$dev" --w "$w" --h "$h" ${fmt:+--input-format "$fmt"} --fps 30 --threads 2 --ratio 0.25 --model "$BG_MODEL" >"$fifo" 2>/dev/null &
+    setsid "$BG_PY" "$SHARE_DIR/lib/bg.py" --dev "$dev" --w "$w" --h "$h" ${fmt:+--input-format "$fmt"} --fps 30 --threads 2 --ratio 0.25 --model "$BG_MODEL" >"$fifo" 2>/dev/null &
     PP[$id]=$!
     setsid mpv "$fifo" --demuxer=rawvideo --demuxer-rawvideo-w="$w" --demuxer-rawvideo-h="$h" \
       --demuxer-rawvideo-mp-format=rgba --demuxer-rawvideo-fps=30 --profile=low-latency --untimed --no-cache \
@@ -647,7 +886,7 @@ launch_cam() {
   log "launch $id dev=$dev size=$vs fmt=${fmt:-default} bg=${C[$id.bg]} mpv=${CP[$id]} py=${PP[$id]}"
 }
 
-stop_cam() { # stänger en kamera (egna PID:er + klass)
+stop_cam() { # closes one camera (own PIDs + class)
   local id=$1 p
   hc dispatch "hl.dsp.window.close({ window = \"class:^Multicam$id\$\" })"
   for p in "${PP[$id]:-}" "${CP[$id]:-}"; do
@@ -663,13 +902,13 @@ stop_cam() { # stänger en kamera (egna PID:er + klass)
   save_pids
 }
 
-last_area_ok() { # det sparade området finns och dess övre vänstra hörn ligger på en ansluten skärm
+last_area_ok() { # the saved area exists and its top-left corner lies on a connected screen
   [[ $LAST_AREA =~ ^(-?[0-9]+),(-?[0-9]+),([0-9]+),([0-9]+)$ ]] || return 1
   hyprctl monitors -j 2>/dev/null | jq -e --argjson x "${BASH_REMATCH[1]}" --argjson y "${BASH_REMATCH[2]}" \
     'any(.[]; $x >= .x and $y >= .y and $x < .x + (.width / .scale) and $y < .y + (.height / .scale))' >/dev/null 2>&1
 }
 
-pick_area() { # kör Omarchys väljare (eller återanvänder senaste området); sätter AX AY AW AH AREA_LABEL. 0 = vald, 1 = avbrutet/ogiltigt (MSG satt)
+pick_area() { # runs Omarchy's picker (or reuses the last area); sets AX AY AW AH AREA_LABEL. 0 = chosen, 1 = cancelled/invalid (MSG set)
   local mode=region out rc g c
   if [[ $CAPTURE == region && $AREA_REUSE == on && $FORCE_PICK == 0 ]] && last_area_ok; then
     IFS=, read -r AX AY AW AH <<<"$LAST_AREA"
@@ -694,10 +933,12 @@ pick_area() { # kör Omarchys väljare (eller återanvänder senaste området); 
   g=("${BASH_REMATCH[@]}")
   if ((g[3] < 200 || g[4] < 200)); then MSG=$(_ 'The area is too small (at least 200x200 px).'); return 1; fi
   AX=${g[1]}; AY=${g[2]}; AW=${g[3]}; AH=${g[4]}
-  AREA_LABEL=""
+  AREA_LABEL=""; WIN_ADDR=""
   if [[ $CAPTURE == window ]]; then
     c=$(hyprctl clients -j 2>/dev/null | jq -r --argjson x "$AX" --argjson y "$AY" --argjson w "$AW" --argjson h "$AH" \
-      'first(.[]|select(.at[0]==$x and .at[1]==$y and .size[0]==$w and .size[1]==$h)|"\(.class) - \(.title)") // empty' | cut -c1-50)
+      'first(.[]|select(.at[0]==$x and .at[1]==$y and .size[0]==$w and .size[1]==$h)|"\(.address) \(.class) - \(.title)") // empty')
+    [[ $c == 0x* ]] && { WIN_ADDR=${c%% *}; c=${c#* }; }   # the address lets the recording follow the window
+    c=${c:0:50}
     AREA_LABEL=$(_ 'Window: %s %sx%s @ %s,%s' "${c:-$(_ 'unknown')}" "$AW" "$AH" "$AX" "$AY")
   else
     AREA_LABEL=$(_ 'Area %sx%s @ %s,%s' "$AW" "$AH" "$AX" "$AY")
@@ -712,7 +953,7 @@ start_preview() {
   local id
   mkdir -p "$RUN"; : >"$RUN/pids"
   load_geom || { MSG=$(_ 'Could not find the screen.'); return 1; }
-  if [[ $CAPTURE != screen ]]; then   # kamerorna ska ligga INNANFÖR det inspelade området
+  if [[ $CAPTURE != screen ]]; then   # the cameras must lie INSIDE the recorded area
     apply_area
     use_geom area
   else
@@ -730,23 +971,23 @@ start_preview() {
 }
 
 ###############################################################################
-# Inspelning
+# Recording
 ###############################################################################
 focused_monitor() { hyprctl monitors -j 2>/dev/null | jq -r 'first(.[]|select(.focused)).name'; }
 GSR_CACHE=1; GSR_AT=0
-gsr_running_cached() { # för formuläret: pgrep högst en gång i sekunden
+gsr_running_cached() { # for the form: pgrep at most once per second
   local now; printf -v now '%(%s)T' -1
   ((now != GSR_AT)) && { gsr_running; GSR_CACHE=$?; GSR_AT=$now; }
   return $GSR_CACHE
 }
 FM_CACHE=""; FM_AT=0
-focused_monitor_cached() { # för ritningen: högst ett hyprctl-anrop per sekund
+focused_monitor_cached() { # for drawing: at most one hyprctl call per second
   local now; printf -v now '%(%s)T' -1
   ((now != FM_AT)) && { FM_CACHE=$(focused_monitor); FM_AT=$now; }
   return 0
 }
 
-tui_address() { # fönstret vars pid är en förfader till den här processen (terminalen)
+tui_address() { # the window whose pid is an ancestor of this process (the terminal)
   local pids=" " p=$$ i
   for i in 1 2 3 4 5 6 7 8; do
     p=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null) || break
@@ -756,32 +997,54 @@ tui_address() { # fönstret vars pid är en förfader till den här processen (t
   hyprctl clients -j 2>/dev/null | jq -r --arg pids "$pids" 'first(.[] | select(" \(.pid) " | inside($pids)) | .address) // empty'
 }
 
+follow_setup() { # window + follow: record the whole monitor under the window (cropped afterwards); sets FMON, writes follow.pre + track
+  local r
+  FMON=""
+  [[ -n $WIN_ADDR ]] || return 1
+  r=$(jq -nr --arg a "$WIN_ADDR" --argjson c "$(hyprctl clients -j 2>/dev/null || echo '[]')" --argjson m "$(hyprctl monitors -j 2>/dev/null || echo '[]')" '
+    first($c[]|select(.address==$a)) as $w | first($m[]|select(.id==$w.monitor))
+    | (if .transform % 2 == 1 then [.height, .width] else [.width, .height] end) as [$pw, $ph]
+    | "\(.name) \(.x) \(.y) \(($pw/.scale)|floor) \(($ph/.scale)|floor) \($w.at[0]) \($w.at[1])"' 2>/dev/null)
+  local mon mx my mw mh wx wy
+  read -r mon mx my mw mh wx wy <<<"$r"
+  [[ -n $mon && $wy =~ ^-?[0-9]+$ ]] || { log "follow: window $WIN_ADDR not found, recording the fixed rectangle"; return 1; }
+  ((wx > mx + mw - AW)) && wx=$((mx + mw - AW)); ((wx < mx)) && wx=$mx
+  ((wy > my + mh - AH)) && wy=$((my + mh - AH)); ((wy < my)) && wy=$my
+  echo "$WIN_ADDR $mon $mx $my $mw $mh $AW $AH $AX $AY" >"$RUN/follow.pre"
+  echo "${EPOCHREALTIME/,/.} $wx $wy" >"$RUN/track"
+  FMON=$mon
+}
+
 start_recording() {
-  local args=() prev_win="" prev_mon="" fm moved=0 shim=0
+  local args=() prev_win="" prev_mon="" fm moved=0 shim=0 tgt=${SCREEN:-$MON} t0
   if gsr_running; then MSG=$(_ 'Another recording is already running - aborting.'); return 1; fi
   [[ -n $MIC ]] && args+=(--with-microphone-audio)
   [[ $DAUDIO == on ]] && args+=(--with-desktop-audio)
-  rm -f "$PTR"
+  rm -f "$PTR" "$RUN/follow" "$RUN/follow.pre" "$RUN/follow.failed" "$RUN/track" "$RUN/winoff"
+  FOLLOWING=0; FMON=""
   if [[ -n $MIC ]]; then
     pactl get-default-source >"$RUN/orig_source" 2>/dev/null
     pactl set-default-source "$MIC" >/dev/null 2>&1
   fi
   fm=$(focused_monitor)
   if [[ $CAPTURE != screen ]]; then
-    # utan --fullscreen anropar Omarchy `omarchy-capture-region smart --match-monitor`; en shim först i PATH
-    # (bara för det här anropet) svarar med det valda området så att Omarchys egen start/stopp/slutbehandling används
+    # without --fullscreen Omarchy calls `omarchy-capture-region smart --match-monitor`; a shim first in PATH
+    # (only for this call) answers with the chosen area (or the window's monitor when following) so Omarchy's own
+    # start/stop/finalizing is used
+    local target="$AX,$AY ${AW}x$AH"
+    [[ $CAPTURE == window && $FOLLOW == on ]] && follow_setup && target="monitor:$FMON"
     mkdir -p "$RUN/shim"
-    printf '#!/bin/bash\necho "%s,%s %sx%s"\n' "$AX" "$AY" "$AW" "$AH" >"$RUN/shim/omarchy-capture-region"
+    printf '#!/bin/bash\necho "%s"\n' "$target" >"$RUN/shim/omarchy-capture-region"
     chmod +x "$RUN/shim/omarchy-capture-region"
     shim=1
   else
     args+=(--fullscreen)
   fi
-  if [[ $CAPTURE == screen && -n $SCREEN && $SCREEN != "$fm" ]]; then   # --fullscreen spelar in den fokuserade skärmen
+  if [[ $CAPTURE == screen && -n $tgt && $tgt != "$fm" ]]; then   # --fullscreen records the focused screen (the cameras are on $MON)
     prev_mon=$fm
     prev_win=$TUI_ADDR
     [[ -z $prev_win ]] && prev_win=$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
-    hc dispatch "hl.dsp.focus({ monitor = \"$SCREEN\" })"
+    hc dispatch "hl.dsp.focus({ monitor = \"$tgt\" })"
     moved=1
   fi
   local od=${MULTICAM_OUTPUT_DIR:-$OUTDIR}
@@ -797,32 +1060,39 @@ start_recording() {
   wait "$START_PID"
   START_PID=""
   rm -rf "$RUN/shim"
-  if ((moved)); then   # återställ fokus: först skärmen, sedan TUI-fönstret om det är känt
+  if ((moved)); then   # restore focus: first the screen, then the TUI window if known (not when hidden: that would show it)
     [[ -n $prev_mon ]] && hc dispatch "hl.dsp.focus({ monitor = \"$prev_mon\" })"
-    [[ -n $prev_win ]] && hc dispatch "hl.dsp.focus({ window = \"address:$prev_win\" })"
+    [[ -n $prev_win ]] && ! [[ $WIN_HIDDEN == 1 && $prev_win == "$TUI_ADDR" ]] && hc dispatch "hl.dsp.focus({ window = \"address:$prev_win\" })"
   fi
   if ! gsr_running || [[ ! -s $PTR ]]; then
     MSG=$(_ 'The recording did not start.')
+    rm -f "$RUN/follow.pre" "$RUN/track"
     restore_mic
     return 1
   fi
   cp "$PTR" "$RUN/recfile"
+  if [[ -f $RUN/follow.pre ]]; then   # t0: when the recorder created the file (video time 0, before Omarchy's 0.1 s trim)
+    t0=$(stat -c %.9W "$(<"$RUN/recfile")" 2>/dev/null); t0=${t0/,/.}
+    [[ $t0 =~ ^[0-9]+\.?[0-9]*$ && ${t0%%.*} -gt 0 ]] || t0=${EPOCHREALTIME/,/.}
+    echo "$(<"$RUN/follow.pre") $t0" >"$RUN/follow" && rm -f "$RUN/follow.pre"
+    FOLLOWING=1
+  fi
   touch "$RUN/recording"
   REC=1; printf -v REC_START '%(%s)T' -1
-  [[ $BAR_IND == on ]] && echo "$REC_START" >"$RUNBASE/recording"   # bar-pluginet multicam.recording blinkar rött
+  [[ $BAR_IND == on ]] && echo "$REC_START" >"$RUNBASE/recording"   # the bar plugin (io.github.mattische.multicam) blinks red
   setsid -f "$SELF" --watch "$RUN" "$$" >/dev/null 2>&1 </dev/null
   refresh_indicator
-  log "recording started: $(<"$RUN/recfile")"
+  log "recording started: $(<"$RUN/recfile")${FMON:+ (following $WIN_ADDR on $FMON)}"
   return 0
 }
 
-hide_tui() { # flyttar terminalfönstret till en dold specialarbetsyta medan inspelningen pågår
+hide_tui() { # moves the terminal window to a hidden special workspace while recording
   [[ $HIDE_WIN == on && -n $TUI_ADDR ]] || return 0
   hc dispatch "hl.dsp.window.move({ window = \"address:$TUI_ADDR\", workspace = \"special:multicam\", follow = false })" && WIN_HIDDEN=1
   return 0
 }
 
-show_tui() { # tillbaka till den arbetsyta som är aktiv nu, med fokus
+show_tui() { # back to the currently active workspace, with focus
   ((WIN_HIDDEN)) || return 0
   WIN_HIDDEN=0
   local ws; ws=$(hyprctl activeworkspace -j 2>/dev/null | jq -r '.id // empty')
@@ -831,17 +1101,17 @@ show_tui() { # tillbaka till den arbetsyta som är aktiv nu, med fokus
   return 0
 }
 
-stop_recording() { # blockerar tills Omarchys slutbehandling är klar och filen bytt namn
+stop_recording() { # blocks until Omarchy's finalizing is done and the file is renamed
   if stop_bg; then wait "$STOP_PID" 2>/dev/null; fi
   finish_recording
 }
 
 ###############################################################################
-# Terminal / ritning
+# Terminal / drawing
 ###############################################################################
 KEY=""
 flush_input() { local k; while IFS= read -rsn1 -t 0.05 k; do :; done; return 0; }
-read_key() { # 0 = tangent i KEY, 1 = EOF, 2 = timeout
+read_key() { # 0 = key in KEY, 1 = EOF, 2 = timeout
   local k c rc
   KEY=""
   IFS= read -rsn1 -t "${1:-0.2}" k; rc=$?
@@ -865,9 +1135,9 @@ swatch() { local h=${1#\#}; printf -v SW '\e[48;2;%d;%d;%dm   \e[0m' $((16#${h:0
 
 fmt_time() { local s=$1; printf '%02d:%02d' $((s / 60)) $((s % 60)); }
 
-# --- utseende ---
-# Färger från Omarchys aktiva tema (~/.local/state/omarchy/current/theme/colors.toml), annars terminalens egen
-# palett (som Omarchy också sätter efter temat). NO_COLOR stänger av färgerna.
+# --- appearance ---
+# Colours from Omarchy's active theme (~/.local/state/omarchy/current/theme/colors.toml), else the terminal's own
+# palette (which Omarchy also sets from the theme). NO_COLOR turns colours off.
 shopt -s extglob
 declare -A TC=()
 R=$'\e[0m'; BO=$'\e[1m'
@@ -888,8 +1158,8 @@ theme_init() {
   ACC=$(tfg accent 34); FG=$(tfg foreground 39); SUB=$(tfg dark_foreground 2); MUT=$(tfg muted 90)
   RED=$(tfg red 31); GRN=$(tfg green 32); YEL=$(tfg yellow 33)
   SELB=$(tbg selection '48;5;237')
-  BTN="$(tbg accent 44)$(tfg background 30)$BO"     # knapp: temats bakgrundsfärg på accentfärgen
-  KEYC="$(tbg lighter_background '48;5;236')$ACC$BO"  # tangent-"chip" i hjälpraden
+  BTN="$(tbg accent 44)$(tfg background 30)$BO"     # button: theme background colour on the accent colour
+  KEYC="$(tbg lighter_background '48;5;236')$ACC$BO"  # key "chip" in the help line
 }
 
 TR=34; TCOL=100; W=76
@@ -900,18 +1170,18 @@ term_size() {
   W=$((TCOL - 4)); ((W > 76)) && W=76
 }
 VL=0
-vlen() { local p=${1//$'\e'\[*([0-9;?])[a-zA-Z]/}; VL=${#p}; }   # synlig längd (utan färgkoder)
+vlen() { local p=${1//$'\e'\[*([0-9;?])[a-zA-Z]/}; VL=${#p}; }   # visible length (without colour codes)
 HRL=""
 hr() { local p; printf -v p '%*s' "$W" ''; HRL="$MUT${p// /─}$R"; }
 HL=""
-hl_line() { # markerad rad: accentstreck i första kolumnen + temats markeringsfärg över hela bredden
+hl_line() { # selected row: accent bar in the first column + the theme's selection colour across the full width
   local c=${1# } pad=""
   c=${c//"$R"/"$R$SELB"}
   vlen "$1"; ((VL < W)) && printf -v pad '%*s' $((W - VL)) ''
   HL="$SELB$ACC▌$R$SELB$c$pad$R"
 }
 CHIPL=()
-chips() { # chips tangent beskrivning ... -> hjälprader (radbrutna efter W) i CHIPL[]
+chips() { # chips key description ... -> help lines (wrapped at W) in CHIPL[]
   CHIPL=()
   local line="" vl=0 t tl
   while (($# >= 2)); do
@@ -924,7 +1194,7 @@ chips() { # chips tangent beskrivning ... -> hjälprader (radbrutna efter W) i C
   [[ -n $line ]] && CHIPL+=("$line")
 }
 OUT=()
-flush_out() { # ritar OUT[] uppifrån i ett enda skriv (ingen flimmer), två teckens marginal
+flush_out() { # draws OUT[] from the top in a single write (no flicker), two-character margin
   local l buf=$'\e[H' n=0
   for l in "${OUT[@]}"; do
     ((n++ >= TR - 1)) && break
@@ -932,7 +1202,7 @@ flush_out() { # ritar OUT[] uppifrån i ett enda skriv (ingen flimmer), två tec
   done
   printf '%s\e[J' "$buf"
 }
-radio() { # radio <aktivt index> <alternativ>... -> RAD
+radio() { # radio <active index> <options>... -> RAD
   local a=$1 i=0 x; RAD=""; shift
   for x; do
     ((i)) && RAD+="   "
@@ -942,16 +1212,16 @@ radio() { # radio <aktivt index> <alternativ>... -> RAD
 }
 toggle() { if [[ $1 == on ]]; then RAD="$ACC●$R ${FG}on$R"; else RAD="$SUB○ off$R"; fi; }
 MSGL=""
-msg_line() { # meddelande/fråga överst i sidfoten
+msg_line() { # message/prompt at the top of the footer
   if [[ -n $PROMPT ]]; then MSGL="$ACC$BO❯$R $FG$BO$PROMPT$R"
   elif [[ -n $MSG ]]; then MSGL="$ACC•$R $FG$MSG$R"
   else MSGL=""; fi
 }
 HDRL=""
 header_line() { HDRL="$ACC$BO󰕧  multicam$R  $SUB$VERSION$R${1:+   $1}"; }
-padr() { PADV=$1; ((${#1} < $2)) && printf -v PADV '%s%*s' "$1" $(($2 - ${#1})) ''; }   # utfyllnad räknad i tecken (inte byte)
+padr() { PADV=$1; ((${#1} < $2)) && printf -v PADV '%s%*s' "$1" $(($2 - ${#1})) ''; }   # padding counted in characters (not bytes)
 
-# --- formulär ---
+# --- form ---
 RT=(); RI=()
 build_rows() {
   RT=(); RI=()
@@ -979,7 +1249,11 @@ draw_form() {
   ((ROW >= ${#RT[@]})) && ROW=$((${#RT[@]} - 1))
   header_line; head+=("$HDRL")
   head+=("${SUB}screen + cameras + microphone$R")
-  [[ -s $RUN/update ]] && head+=("$GRN$BO↑$R ${GRN}A new version is available - press U to update$R")
+  if [[ -s $RUN/update && $INSTALL_MODE == package ]]; then
+    head+=("$GRN$BO↑$R ${GRN}multicam $(<"$RUN/update") is available - update with: $PKG_UPDATE_CMD$R")
+  elif [[ -s $RUN/update ]]; then
+    head+=("$GRN$BO↑$R ${GRN}A new version is available - press U to update$R")
+  fi
   for i in "${!RT[@]}"; do
     t=${RT[$i]}; id=${RI[$i]}; val=""; hint=""; sub_row=0; dim=0
     case $t in
@@ -1047,7 +1321,7 @@ draw_form() {
     fi
     body+=("$line"); bopt+=(0)
   done
-  # sidfot
+  # footer
   gsr_running_cached && foot+=("$YEL▲ Note: a recording is already running - do not start a new one.$R")
   msg_line; hr; foot+=("$MSGL" "$HRL")
   local ctx=()
@@ -1059,7 +1333,7 @@ draw_form() {
   fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
 }
 
-fit_body() { # får body[] att rymmas: först bort med tomrader/rubriker, sedan ett fönster runt den markerade raden
+fit_body() { # makes body[] fit: first drop blank lines/headings, then a window around the selected row
   local avail=$((TR - 1 - ${#head[@]} - ${#foot[@]})) i nb=() ns=0 start
   ((${#body[@]} <= avail)) && return 0
   for i in "${!body[@]}"; do
@@ -1075,7 +1349,7 @@ fit_body() { # får body[] att rymmas: först bort med tomrader/rubriker, sedan 
   body=("${body[@]:start:avail}")
 }
 
-cycle_idx() { # cycle_idx <antal> <nuvarande> <delta> -> ny index (0..n-1)
+cycle_idx() { # cycle_idx <count> <current> <delta> -> new index (0..n-1)
   echo $((($2 + $3 + $1) % $1))
 }
 
@@ -1132,7 +1406,7 @@ form_change() { # delta ±1
   esac
 }
 
-hex_prompt() { # sätter HEX; 0 = ok, 1 = avbrutet
+hex_prompt() { # sets HEX; 0 = ok, 1 = cancelled
   local buf="" id=$1
   HEX=""
   while :; do
@@ -1152,11 +1426,11 @@ hex_prompt() { # sätter HEX; 0 = ok, 1 = avbrutet
   done
 }
 
-pick_hyprpicker() { # c: starta hyprpicker (kräver musklick)
+pick_hyprpicker() { # c: start hyprpicker (needs a mouse click)
   local out
   if ! need hyprpicker; then MSG=$(_ 'hyprpicker is missing.'); return 1; fi
   MSG=$(_ 'Click any pixel on the screen (Esc cancels)...'); $DRAW
-  # i bakgrunden + wait, så att signaler (HUP/TERM) hanteras direkt
+  # in the background + wait, so signals (HUP/TERM) are handled right away
   timeout 120 hyprpicker -f hex >"$RUN/pick.out" 2>/dev/null </dev/null &
   wait $!
   out=$(head -1 "$RUN/pick.out" 2>/dev/null); rm -f "$RUN/pick.out"
@@ -1165,7 +1439,7 @@ pick_hyprpicker() { # c: starta hyprpicker (kräver musklick)
   MSG=$(_ 'No colour chosen.'); return 1
 }
 
-shell_out() { # kör ett kommando på vanliga skärmen (för frågor/utskrift) och återgår till TUI:t
+shell_out() { # runs a command on the normal screen (for prompts/output) and returns to the TUI
   printf '\e[?7h\e[?25h\e[?1049l'; IN_ALT=0
   "$@"
   local rc=$?
@@ -1174,11 +1448,15 @@ shell_out() { # kör ett kommando på vanliga skärmen (för frågor/utskrift) o
   return $rc
 }
 
-update_flow() { # U i formuläret
+update_flow() { # U in the form
   if [[ ! -s $RUN/update ]]; then
     MSG=$(_ 'Checking for updates...'); draw_form
-    if update_available; then echo 1 >"$RUN/update"
+    if update_available; then echo "${UPD_NEW:-1}" >"$RUN/update"
+    elif [[ $INSTALL_MODE == package ]]; then MSG=$(_ 'No newer release found (up to date or offline).'); return
     else MSG=$(_ 'No update found (up to date, offline, or not installed from a git clone).'); return; fi
+  fi
+  if [[ $INSTALL_MODE == package ]]; then   # pacman owns the files: the update is done with the AUR helper
+    MSG=$(_ 'multicam %s is available - update with: %s' "$(<"$RUN/update")" "$PKG_UPDATE_CMD"); return
   fi
   confirm "$(_ 'Update multicam now?')" || return
   if shell_out cmd_update --yes; then
@@ -1187,9 +1465,9 @@ update_flow() { # U i formuläret
   fi
 }
 
-# --- inställningsvyn (S i formuläret): appinställningar som sparas direkt ---
-SRT=(outdir after hide bar step big updcheck); SROW=0
-outdir_label() { # visad utmapp
+# --- settings view (S in the form): app settings saved immediately ---
+SRT=(outdir after hide bar countdown follow step big updcheck); SROW=0
+outdir_label() { # displayed output folder
   if [[ -n ${MULTICAM_OUTPUT_DIR:-} ]]; then ODL="$MULTICAM_OUTPUT_DIR (MULTICAM_OUTPUT_DIR)"
   elif [[ -n $OUTDIR ]]; then ODL=$OUTDIR
   else ODL="Omarchy default (${OMARCHY_SCREENRECORD_DIR:-$(xdg-user-dir VIDEOS 2>/dev/null || echo ~/Videos)})"; fi
@@ -1216,6 +1494,11 @@ draw_settings() {
         esac; val=$RAD ;;
       hide) label="Hide while recording"; toggle "$HIDE_WIN"; val="$RAD  ${SUB}multicam comes back when the recording stops$R" ;;
       bar) label="Bar indicator"; toggle "$BAR_IND"; val="$RAD  ${SUB}blinking red icon in the bar, click stops$R" ;;
+      countdown) label="Countdown"
+        case $COUNTDOWN in off) radio 0 off "3 s" "5 s" "10 s" ;; 3) radio 1 off "3 s" "5 s" "10 s" ;;
+          5) radio 2 off "3 s" "5 s" "10 s" ;; 10) radio 3 off "3 s" "5 s" "10 s" ;; esac
+        val="$RAD  ${SUB}before recording starts$R" ;;
+      follow) label="Follow window"; toggle "$FOLLOW"; val="$RAD  ${SUB}window mode: the recording follows a moved window$R" ;;
       step) body+=("" "$SUB${BO}CAMERA KEYS$R"); bopt+=(1 1)
         label="Arrow step"; val="$FG$STEP px$R" ;;
       big) label="Shift + arrow step"; val="$FG$BIG px$R" ;;
@@ -1241,6 +1524,8 @@ settings_change() { # delta ±1
     after) for i in 0 1 2; do [[ ${o[$i]} == "$AFTER" ]] && break; done; AFTER=${o[$(cycle_idx 3 "$i" "$d")]} ;;
     hide) [[ $HIDE_WIN == on ]] && HIDE_WIN=off || HIDE_WIN=on ;;
     bar) [[ $BAR_IND == on ]] && BAR_IND=off || BAR_IND=on ;;
+    countdown) o=(off 3 5 10); for i in 0 1 2 3; do [[ ${o[$i]} == "$COUNTDOWN" ]] && break; done; COUNTDOWN=${o[$(cycle_idx 4 "$i" "$d")]} ;;
+    follow) [[ $FOLLOW == on ]] && FOLLOW=off || FOLLOW=on ;;
     updcheck) [[ $UPDCHECK == on ]] && UPDCHECK=off || UPDCHECK=on ;;
     step) STEP=$((STEP + d * 5)); ((STEP < 5)) && STEP=5; ((STEP > 100)) && STEP=100 ;;
     big) BIG=$((BIG + d * 25)); ((BIG < 25)) && BIG=25; ((BIG > 400)) && BIG=400 ;;
@@ -1249,7 +1534,7 @@ settings_change() { # delta ±1
   save_config
 }
 
-text_prompt() { # text_prompt <rubrik> <startvärde> -> TXT; 0 = ok, 1 = avbrutet
+text_prompt() { # text_prompt <label> <initial value> -> TXT; 0 = ok, 1 = cancelled
   local buf=$2
   TXT=""
   while :; do
@@ -1292,12 +1577,12 @@ settings_loop() {
   done
 }
 
-form_loop() { # 0 = starta förhandsvisning, 1 = avsluta
+form_loop() { # 0 = start preview, 1 = quit
   DRAW=draw_form
   local lastdraw=0 now
   while :; do
     draw_form; printf -v lastdraw '%(%s)T' -1
-    while :; do   # utan tangenttryck: rita om högst en gång i sekunden (uppdateringsrad, fokuserad skärm)
+    while :; do   # without a key press: redraw at most once per second (update line, focused screen)
       read_key
       case $? in
         1) return 1 ;;
@@ -1329,7 +1614,7 @@ form_loop() { # 0 = starta förhandsvisning, 1 = avsluta
   done
 }
 
-# --- förhandsvisning / inspelning ---
+# --- preview / recording ---
 draw_run() {
   local id now state where i line det sel
   local -a head=() body=() bopt=() foot=()
@@ -1337,13 +1622,14 @@ draw_run() {
   term_size
   printf -v now '%(%s)T' -1
   if ((REC)); then
-    local dot=$RED; ((now % 2)) && dot=$MUT    # blinkande punkt, ritas om varje sekund
+    local dot=$RED; ((now % 2)) && dot=$MUT    # blinking dot, redrawn every second
     state="$dot●$R $RED${BO}RECORDING$R  $FG$BO$(fmt_time $((now - REC_START)))$R"
   else
     state="$YEL$BO○ PREVIEW - adjust the cameras$R"
   fi
   header_line "$state"; head+=("$HDRL")
   if [[ $CAPTURE == screen ]]; then where="Full screen: $MON"; else where=$AREA_LABEL; fi
+  [[ $CAPTURE == window && $FOLLOW == on && -n $WIN_ADDR ]] && where+="  ·  follows the window"
   head+=("$SUB$where$R")
   if ((!REC)); then head+=("" " $BTN  ⏎  Start recording  $R  ${SUB}arrange the cameras first - nothing is recorded yet$R"); fi
   body+=(""); bopt+=(1)
@@ -1383,7 +1669,60 @@ draw_run() {
   fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
 }
 
-confirm() { # confirm "text" -> 0 = ja
+# --- countdown before recording (COUNTDOWN) ---
+BIGF=(111101101101111 010110010010111 111001111100111 111001111001111 101101111001001
+  111100111001111 111100111101111 111001001001001 111101111101111 111101111001111)   # 3x5 pixel digits 0-9
+draw_countdown() { # draw_countdown <seconds left>: big digits in the accent colour
+  local n=$1 z=2 r i j d row line px pad w
+  term_size
+  ((TR < 22 || TCOL < 40)) && z=1
+  w=$((${#n} * 8 * z - 2 * z))
+  printf -v px '%*s' $((2 * z)) ''; printf -v pad '%*s' $(((W - w) / 2 > 0 ? (W - w) / 2 : 0)) ''
+  header_line "$YEL$BO○ GET READY$R"; OUT=("$HDRL")
+  if [[ $CAPTURE == screen ]]; then OUT+=("${SUB}Full screen: $MON$R"); else OUT+=("$SUB$AREA_LABEL$R"); fi
+  OUT+=("")
+  for ((r = 0; r < 5; r++)); do
+    line=""
+    for ((i = 0; i < ${#n}; i++)); do
+      d=${BIGF[${n:i:1}]}; row=${d:r*3:3}
+      ((i)) && line+=$px
+      for ((j = 0; j < 3; j++)); do if [[ ${row:j:1} == 1 ]]; then line+="${px// /█}"; else line+=$px; fi; done
+    done
+    for ((j = 0; j < z; j++)); do OUT+=("$pad$ACC$BO$line$R"); done
+  done
+  local t; t=$(_ 'Recording starts in %s s' "$n"); printf -v line '%*s' $(((W - ${#t}) / 2 > 0 ? (W - ${#t}) / 2 : 0)) ''
+  OUT+=("" "$line$FG$BO$t$R" ""); hr; OUT+=("$HRL")
+  chips "Esc q" "cancel" "⏎" "start now"
+  OUT+=("${CHIPL[@]}"); flush_out
+}
+
+countdown() { # 0 = go, 1 = cancelled (Esc/q) or terminal gone
+  [[ $COUNTDOWN =~ ^[0-9]+$ ]] || return 0
+  local now end left ms
+  now=${EPOCHREALTIME/[.,]/}; end=$((now + COUNTDOWN * 1000000))
+  flush_input
+  while :; do
+    now=${EPOCHREALTIME/[.,]/}; ((now >= end)) && return 0
+    left=$(((end - now + 999999) / 1000000))
+    draw_countdown "$left"
+    ms=$(((end - now) - (left - 1) * 1000000)); ms=$(((ms + 999) / 1000)); ((ms < 10)) && ms=10   # until the next whole second
+    read_key "$((ms / 1000)).$(printf '%03d' $((ms % 1000)))"
+    case $? in 1) return 1 ;; 2) continue ;; esac
+    case $KEY in q | Q | $'\e') return 1 ;; ENTER) return 0 ;; esac
+  done
+}
+
+processing_screen() { # shown while a followed window recording is cropped (by the TUI or the watcher)
+  local p="" dur us
+  dur=$(cat "$RUN/processing" 2>/dev/null)
+  us=$(grep -o 'out_time_us=[0-9]*' "$RUN/ffprog" 2>/dev/null | tail -1); us=${us#*=}
+  [[ $dur =~ ^[0-9.]+$ && $us =~ ^[0-9]+$ ]] && p=$(awk -v u="$us" -v d="$dur" 'BEGIN { v = u / 10000 / d; if (v > 100) v = 100; printf "  %d %%", v }')
+  term_size; header_line
+  OUT=("$HDRL" "" "$YEL$BO⋯$R  $FG${BO}Processing…$R$FG$p$R" "   ${SUB}cropping the recording to the window it followed$R")
+  flush_out
+}
+
+confirm() { # confirm "text" -> 0 = yes
   while :; do
     PROMPT="$1 $(_ '[y/N]')"; $DRAW
     read_key 5
@@ -1398,7 +1737,7 @@ move_cam() { # dx dy (px)
   C[$id.rx]=$((C[$id.rx] + $1)); C[$id.ry]=$((C[$id.ry] + $2))
 }
 
-run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
+run_loop() { # 0 = done (result in RESULT_FILE), 1 = quit without a result
   DRAW=draw_run
   local id lastdraw=0 now k
   SEL=0
@@ -1408,7 +1747,7 @@ run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
   while :; do
     read_key 0.2; k=$?
     if ((k == 1)); then return 1; fi
-    if ((REC)) && ! gsr_running; then   # stoppad utifrån (Alt+Print / klick / SIGTERM)
+    if ((REC)) && ! gsr_running; then   # stopped from outside (Alt+Print / click / SIGTERM)
       show_tui
       MSG=$(_ 'The recording stopped - finalizing...'); draw_run
       finish_recording
@@ -1447,10 +1786,13 @@ run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
             return 0
           fi
         else return 1; fi ;;
-      ENTER)   # bara Enter startar; F5 har redan använts för förhandsvisningen
+      ENTER)   # only Enter starts; F5 was already used for the preview
         if ((!REC)); then
-          MSG=$(_ 'Starting recording...'); draw_run
-          start_recording && { MSG=""; hide_tui; }
+          if countdown; then   # the TUI hides before the recorder starts, so it is never in the recording
+            MSG=$(_ 'Starting recording...'); draw_run
+            hide_tui
+            if start_recording; then MSG=""; else show_tui; fi
+          else MSG=$(_ 'Countdown cancelled - nothing was recorded.'); fi
         fi ;;
     esac
     if [[ -n $id ]]; then
@@ -1500,6 +1842,7 @@ result_screen() {
   if [[ -f $f ]]; then
     d=${f/#"$HOME"/\~}
     header_line; OUT=("$HDRL" "" "$GRN$BO✓$R  $FG${BO}The recording is done:$R" "   $ACC$d$R" "")
+    [[ -f $RUN/follow.failed ]] && OUT+=("$YEL⚠$R  ${FG}Following the window failed: the file shows the whole monitor.$R" "")
     if [[ $AFTER == open ]] && need omacut; then
       OUT+=("${SUB}Opening in omacut...$R"); flush_out
       setsid -f omacut "$f" >/dev/null 2>&1 </dev/null; sleep 1
@@ -1521,21 +1864,21 @@ result_screen() {
 }
 
 ###############################################################################
-# Städning och huvudprogram
+# Cleanup and main program
 ###############################################################################
 cleanup() {
   ((CLEANED)) && return 0
   CLEANED=1
   trap '' INT TERM HUP PIPE
-  touch "$RUN/quit" 2>/dev/null          # låter vakten ta över om vi skulle hänga
-  # hängd terminal: skriv inget mer dit (EIO/SIGPIPE får inte avbryta städningen)
+  touch "$RUN/quit" 2>/dev/null          # lets the watcher take over if we hang
+  # hung-up terminal: write nothing more to it (EIO/SIGPIPE must not abort the cleanup)
   ((HUPPED)) && exec >/dev/null 2>&1
   if [[ -n $PICK_PID ]]; then kill -TERM -- "-$PICK_PID" 2>/dev/null || kill -TERM "$PICK_PID" 2>/dev/null; fi
-  if [[ -n $START_PID ]]; then      # avbruten under start: invänta startskriptet, ta över ansvaret
+  if [[ -n $START_PID ]]; then      # interrupted during start: wait for the start script, take over responsibility
     wait "$START_PID" 2>/dev/null
     if gsr_running && [[ -s $PTR ]]; then cp "$PTR" "$RUN/recfile"; REC=1; fi
   fi
-  if ((REC)) && gsr_running; then   # stoppa först (SIGINT), städa direkt, slutbehandla sist
+  if ((REC)) && gsr_running; then   # stop first (SIGINT), clean up right away, finalize last
     stop_bg
   fi
   cleanup_windows
@@ -1552,11 +1895,11 @@ cleanup() {
   if ((IN_ALT)); then printf '\e[?7h\e[?25h\e[?1049l' 2>/dev/null; fi
   [[ -n $STTY ]] && stty "$STTY" 2>/dev/null
   [[ $(cat "$RUNBASE/tui.pid" 2>/dev/null) == "$$" ]] && rm -f "$RUNBASE/tui.pid"
-  # sessionskatalogen: bort om ingen inspelning/vakt längre behöver den
+  # the session dir: removed if no recording/watcher needs it any more
   if ! gsr_running; then
     local w; w=$(cat "$RUN/watcher.pid" 2>/dev/null)
     [[ -n $w && -d /proc/$w ]] && for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -d /proc/$w ]] || break; sleep 0.1; done
-    rm -rf "$RUN"
+    [[ -n $w && -d /proc/$w ]] || rm -rf "$RUN"   # a busy watcher removes it itself (the TUI is gone by then)
   fi
 }
 
@@ -1568,20 +1911,23 @@ trap '' PIPE
 
 main() {
   local m
-  for m in hyprctl jq mpv pactl gpu-screen-recorder omarchy-capture-screenrecording; do
+  for m in omarchy-capture-screenrecording omarchy-capture-region omarchy-launch-tui; do   # not package dependencies
+    need "$m" || { _ 'multicam needs Omarchy (https://omarchy.org): %s is missing.\n' "$m" >&2; CLEANED=1; exit 1; }
+  done
+  for m in hyprctl jq mpv pactl gpu-screen-recorder; do
     need "$m" || { _ 'multicam: %s is missing (required).\n' "$m" >&2; CLEANED=1; exit 1; }
   done
   mkdir -p "$RUNBASE"
   if [[ -f $RUNBASE/tui.pid ]] && kill -0 "$(<"$RUNBASE/tui.pid")" 2>/dev/null &&
     grep -q multicam "/proc/$(<"$RUNBASE/tui.pid")/cmdline" 2>/dev/null; then
-    if [[ -f $RUNBASE/recording ]] && gsr_running; then   # genvägen igen under inspelning: stoppa
+    if [[ -f $RUNBASE/recording ]] && gsr_running; then   # the keybind again while recording: stop
       cmd_stop; CLEANED=1; exit 0
     fi
     _ 'multicam: already running (PID %s).\n' "$(<"$RUNBASE/tui.pid")" >&2; CLEANED=1; exit 1
   fi
   echo $$ >"$RUNBASE/tui.pid"
-  gsr_running || rm -f "$RUNBASE/recording"   # bar-ikonen: kvarglömd status efter en krasch
-  # rester efter en krasch: gamla sessionskataloger vars TUI inte lever; återställ mic om ingen inspelning pågår
+  gsr_running || rm -f "$RUNBASE/recording"   # the bar icon: stale state left after a crash
+  # leftovers after a crash: old session dirs whose TUI is dead; restore the mic if no recording is running
   local d pid
   for d in "$RUNBASE"/s.*; do
     [[ -d $d ]] || continue
@@ -1596,16 +1942,31 @@ main() {
   load_config
   theme_init
   if [[ -z ${MULTICAM_NO_UPDATE_CHECK:-} && $UPDCHECK != off ]]; then
-    ( update_available && echo 1 >"$RUN/update" ) >/dev/null 2>&1 &
+    ( update_available && echo "${UPD_NEW:-1}" >"$RUN/update" ) >/dev/null 2>&1 &
+  fi
+  if [[ $INSTALL_MODE == package && $BAR_IND == on ]]; then
+    # first start of a pacman install: add the bar indicator once (unless the user removed it with setup-bar --remove);
+    # a plain copy is refreshed when the package brought newer plugin files
+    if [[ -z $BAR_PLUGIN && ! -d $PLUGIN_DIR ]] && need omarchy-shell; then
+      BAR_PLUGIN=on; conf_set BAR_PLUGIN on
+      (cmd_setup_bar --no-config) >/dev/null 2>&1 &
+    elif [[ $BAR_PLUGIN != off ]] && plugin_stale; then
+      cp -- "$SHARE_DIR"/shell-plugin/* "$PLUGIN_DIR"/ 2>/dev/null   # files under plugins/ hot-reload by themselves
+    fi
   fi
   list_devices; list_mics; list_monitors
   resolve_saved
-  printf '\e[?1049h\e[?25l\e[?7l'; IN_ALT=1   # ?7l: långa rader klipps i stället för att radbrytas
+  # installed twice (install.sh and the package): the copy first on PATH wins. Removing the per-user program files keeps
+  # the settings and the add-on, which the package uses as well.
+  if [[ -z $MSG && $INSTALL_MODE != repo && -e $BIN_LINK && -x /usr/bin/multicam ]]; then
+    MSG=$(_ 'multicam is installed twice (package + ~/.local/bin). Keep the package: rm -r ~/.local/bin/multicam ~/.local/share/multicam/{bin,lib,rev,source} ~/.local/share/applications/multicam.desktop')
+  fi
+  printf '\e[?1049h\e[?25l\e[?7l'; IN_ALT=1   # ?7l: long lines are clipped instead of wrapped
   while form_loop; do
     DRAW=draw_form
-    if [[ $CAPTURE != screen ]] && ! pick_area; then continue; fi   # avbrutet val: tillbaka till formuläret
+    if [[ $CAPTURE != screen ]] && ! pick_area; then continue; fi   # cancelled selection: back to the form
     if start_preview; then
-      flush_input   # tangenter som trycktes medan kamerorna öppnades får inte starta inspelningen
+      flush_input   # keys pressed while the cameras opened must not start the recording
       if run_loop; then
         ((${#RESULT_FILE})) && result_screen "$RESULT_FILE"
       fi

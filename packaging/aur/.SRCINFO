@@ -1,0 +1,24 @@
+pkgbase = multicam
+	pkgdesc = Keyboard-driven TUI for Omarchy that records the screen, up to two camera overlays and a microphone to MP4
+	pkgver = 1.4.0
+	pkgrel = 1
+	url = https://github.com/mattische/multicam
+	arch = any
+	license = MIT
+	depends = bash
+	depends = hyprland
+	depends = jq
+	depends = mpv
+	depends = libpulse
+	depends = gpu-screen-recorder
+	optdepends = v4l-utils: choose the best camera resolution (v4l2-ctl)
+	optdepends = hyprpicker: pick the ring colour from the screen
+	optdepends = python: background-removal add-on (multicam install-bgremove creates a per-user venv)
+	optdepends = ffmpeg: cropping when following a window, camera capture for the background-removal add-on
+	optdepends = curl: download the background-removal model
+	optdepends = git: notice new releases on GitHub (update check)
+	optdepends = omacut: open the finished recording (from the Omarchy repository)
+	source = multicam-1.4.0.tar.gz::https://github.com/mattische/multicam/archive/refs/tags/v1.4.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = multicam

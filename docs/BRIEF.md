@@ -1,6 +1,6 @@
 # Implementation brief (for agents)
 
-Authoritative requirements: `docs/kravspec.md` (Swedish). Every requirement ID (A1…F5) must be met, every test (T-…) must be runnable.
+Authoritative requirements: `docs/requirements.md`. Every requirement ID (A1…F5) must be met, every test (T-…) must be runnable.
 This brief adds verified facts from earlier prototyping on this machine. Read both before writing code.
 
 ## Machine facts
@@ -38,26 +38,26 @@ mpv "av://v4l2:$DEV" --profile=low-latency --untimed --no-cache --demuxer-lavf-o
 Use `--input-ipc-server=$RUNDIR/mpvA.sock` so shape change (crop) can be applied live via `vf set` without restarting, or restart that one mpv (acceptable). Keep a PID file per window in `$XDG_RUNTIME_DIR/multicam/`. Never `pkill mpv`; close by class + own PIDs (E5).
 Prototype key loop handles CSI/SS3 escape sequences, Shift+arrows (`\e[1;2A` etc.), PgUp/PgDn (`\e[5~`/`\e[6~`), numpad presets 1–9, clamp to monitor, resize ±10 % around centre. Copy from it.
 
-## TUI design (agreed with user; UI text in Swedish)
-Screen 1 (form, pure bash full-screen, no gum needed; ↑↓ row, ←→ change value, Enter = toggle/choose, F5 or `Enter` on "Starta" starts, q/Esc quits):
+## TUI design (agreed with user; UI text in English)
+Screen 1 (form, pure bash full-screen, no gum needed; ↑↓ row, ←→ change value, Enter = toggle/choose, F5 or `Enter` on "Start" starts, q/Esc quits):
 ```
 ┌─ multicam ──────────────────────────────────────────────┐
-│  Kamera A    ▸ HD Pro Webcam C920                       │
-│     form       ● cirkel   ○ rektangel      ring [x]     │
-│     kantfärg   ■ #ff3399   tjocklek 4                    │
-│     bakgrund   [ ] bort        (only if add-on installed)│
-│  Kamera B      FaceTime HD Camera                       │
+│  Camera A    ▸ HD Pro Webcam C920                       │
+│     shape      ● circle   ○ rectangle      ring [x]     │
+│     colour     ■ #ff3399   thickness 4                   │
+│     background [ ] remove      (only if add-on installed)│
+│  Camera B      FaceTime HD Camera                       │
 │     ...                                                 │
-│  Mikrofon      Audient iD14                             │
-│  Skrivbordsljud  [x] på                                 │
-│  Skärm           DP-1 (fokuserad)                       │
-│  ↑↓ rad   ←→ ändra   F5 starta   q avsluta              │
+│  Microphone    Audient iD14                             │
+│  Desktop audio   [x] on                                 │
+│  Screen          DP-1 (focused)                         │
+│  ↑↓ row   ←→ change   F5 start   q quit                 │
 └─────────────────────────────────────────────────────────┘
 ```
-Screen 2 (after start: cameras appear, are placed, THEN recording starts; header shows `● SPELAR IN mm:ss`, selected camera, `[FLYTTA]`/`[STORLEK]`):
-keys per kravspec D3–D6: Tab, arrows (+Shift), m, +/-/PgUp/PgDn, 1–9, s, r, c (hyprpicker), C (hex input), ←/→ in colour row? — NOTE: arrows are taken by move/size; put the 8 preset colours on `p` (cycle) instead and document this deviation clearly in README + report, or find a clean alternative. `[`/`]` thickness, b bg-removal, q/Esc stop (confirm), after stop: show final filename and "Öppna i omacut? [J/n]".
+Screen 2 (after start: cameras appear, are placed, THEN recording starts; header shows `● RECORDING mm:ss`, selected camera, `[MOVE]`/`[SIZE]`):
+keys per requirements D3–D6: Tab, arrows (+Shift), m, +/-/PgUp/PgDn, 1–9, s, r, c (hyprpicker), C (hex input), ←/→ in colour row? — NOTE: arrows are taken by move/size; put the 8 preset colours on `p` (cycle) instead and document this deviation clearly in README + report, or find a clean alternative. `[`/`]` thickness, b bg-removal, q/Esc stop (confirm), after stop: show final filename and "Open in omacut? [Y/n]".
 Position/size/shape/colour per camera are saved to config on exit (B4) and reused next time.
-Hardware ids in config: store device path AND name; on start, if saved device missing, show a clear warning in the form row ("⚠ saknas: <name>") and set to "av" (B5).
+Hardware ids in config: store device path AND name; on start, if saved device missing, show a clear warning in the form row ("⚠ missing: <name>") and set to "off" (B5).
 
 ## Robustness (E)
 - trap EXIT/INT/TERM/HUP → cleanup (idempotent): stop recording if ours running, close own windows, disable rules, restore mic, refresh indicator, restore tty.

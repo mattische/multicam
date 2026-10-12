@@ -1,10 +1,10 @@
-"""Gemensamt testbibliotek för multicam: pty-drivning, hyprctl-hjälpare, städkontroller."""
+"""Shared test library for multicam: pty driving, hyprctl helpers, cleanup checks."""
 import os, pty, sys, time, json, subprocess, select, re, shutil, fcntl, termios, struct, signal
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, 'bin', 'multicam')
 SCRATCH = os.environ.get('MC_SCRATCH', f'/tmp/claude-{os.getuid()}/multicam-tests')
-# testerna ska inte göra nätverksanrop
+# the tests must not make network calls
 os.environ['MULTICAM_NO_UPDATE_CHECK'] = '1'
 ANSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]')
 
@@ -61,7 +61,7 @@ def default_source():
 
 
 def own_mpv_for_multicam():
-    """mpv-processer med wayland-app-id=Multicam* samt bg.py (bara multicams egna)."""
+    """mpv processes with wayland-app-id=Multicam* plus bg.py (only multicam's own)."""
     out = []
     for pid in os.listdir('/proc'):
         if not pid.isdigit():
@@ -77,8 +77,8 @@ def own_mpv_for_multicam():
 
 
 def rules_enabled():
-    """hyprctl har inget `rules -j`; sonden är ett eget foot-fönster med klass MulticamA:
-    är multicams regel aktiv blir det flytande + fastnålat (float=true, pin=true). Returnerar lista (tom = inga regler aktiva)."""
+    """hyprctl has no `rules -j`; the probe is a separate foot window with class MulticamA:
+    if multicam's rule is active it becomes floating + pinned (float=true, pin=true). Returns a list (empty = no rules active)."""
     p = subprocess.Popen(['foot', '--app-id=MulticamA', '-e', 'sleep', '30'], env=hypr_env(),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -91,7 +91,7 @@ def rules_enabled():
             return None
         time.sleep(0.2)
         c = [x for x in clients() if x['class'] == 'MulticamA' and x['pid'] == p.pid][0]
-        return [f'regel aktiv (floating={c["floating"]} pinned={c["pinned"]})'] if (c['floating'] or c['pinned']) else []
+        return [f'rule active (floating={c["floating"]} pinned={c["pinned"]})'] if (c['floating'] or c['pinned']) else []
     finally:
         p.terminate()
         try:
@@ -122,7 +122,7 @@ def out_dir(name):
 
 
 class Session:
-    """Kör multicam i en pty (utan terminalfönster)."""
+    """Runs multicam in a pty (without a terminal window)."""
 
     def __init__(self, home, outdir=None, env=None, cols=100, rows=34, args=()):
         e = hypr_env()
@@ -159,7 +159,7 @@ class Session:
         return self.buf
 
     def screen(self):
-        """Senast ritade ramen som text (utan ANSI)."""
+        """The most recently drawn frame as text (without ANSI)."""
         self.pump(0.05)
         last = self.buf.rsplit('\x1b[H', 1)[-1]
         return ANSI.sub('', last)
@@ -222,7 +222,7 @@ PGUP, PGDN, F5, ESC, ENTER, TAB = '\x1b[5~', '\x1b[6~', '\x1b[15~', '\x1b', '\r'
 
 def _detect_cams():
     out = subprocess.run('omarchy-capture-webcam-list', capture_output=True, text=True).stdout
-    # samma tolkning som appen (list_devices): namnet fram till första " (", utan avslutande kolon
+    # same parsing as the app (list_devices): the name up to the first " (", without a trailing colon
     return [(d, n.split(' (')[0].rstrip(':').strip()) for d, n in re.findall(r'^(/dev/video\d+)\s+(.*)$', out, re.M)]
 
 
@@ -231,9 +231,9 @@ def _detect_mics():
     return [l.split('\t')[1] for l in out.splitlines() if '.monitor' not in l]
 
 
-# Enheter: autodetekteras (första två kamerorna / första två mikrofonerna) och kan skrivas över med miljövariabler:
-#   MC_CAM_A_DEV, MC_CAM_A_NAME, MC_CAM_B_DEV, MC_CAM_B_NAME  (kamera A/B; namn = som i omarchy-capture-webcam-list)
-#   MC_MIC, MC_MIC2  (PulseAudio-källnamn, se `pactl list short sources`; MC_MIC2 används av T-C3v)
+# Devices: autodetected (first two cameras / first two microphones) and can be overridden with environment variables:
+#   MC_CAM_A_DEV, MC_CAM_A_NAME, MC_CAM_B_DEV, MC_CAM_B_NAME  (camera A/B; name = as in omarchy-capture-webcam-list)
+#   MC_MIC, MC_MIC2  (PulseAudio source names, see `pactl list short sources`; MC_MIC2 is used by T-C3v)
 _c, _m = _detect_cams() + [('', '')] * 2, _detect_mics() + [''] * 2
 CAM_A_DEV = os.environ.get('MC_CAM_A_DEV', _c[0][0])
 CAM_A_NAME = os.environ.get('MC_CAM_A_NAME', _c[0][1])
@@ -274,15 +274,15 @@ def wait_until(fn, timeout=10, step=0.1):
 
 
 def start_to_preview(sess, timeout=15):
-    """Formulär -> F5 -> vänta på förhandsvisning och mappade kamerafönster."""
-    assert sess.wait_for('multicam', 5), 'formuläret visades inte'
+    """Form -> F5 -> wait for the preview and mapped camera windows."""
+    assert sess.wait_for('multicam', 5), 'the form was not shown'
     sess.send(F5)
-    assert sess.wait_for('PREVIEW', timeout), 'ingen förhandsvisning:\n' + sess.screen()
+    assert sess.wait_for('PREVIEW', timeout), 'no preview:\n' + sess.screen()
     return True
 
 
 def wake():
-    """Skärmarna kan vara släckta (DPMS) efter inaktivitet; då levereras inga bildrutor."""
+    """The screens may be off (DPMS) after inactivity; then no frames are delivered."""
     sh("hyprctl dispatch 'hl.dsp.dpms({ action = \"on\" })'")
     time.sleep(0.3)
 

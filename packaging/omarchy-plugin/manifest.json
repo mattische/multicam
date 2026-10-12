@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.mattische.multicam",
+  "name": "multicam",
+  "version": "1.0.0",
+  "author": "mattische",
+  "license": "MIT",
+  "description": "Bar indicator for multicam: blinks red with the elapsed time while recording (click to stop); optional idle icon that opens the recorder. Needs the multicam app.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "multicam",
+    "description": "Blinking red icon with the elapsed time while multicam records (click stops); optionally a record icon that opens multicam when idle",
+    "category": "Status",
+    "aliases": [
+      "multicam",
+      "record",
+      "recording",
+      "camera",
+      "webcam"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showWhenIdle": false
+    },
+    "schema": [
+      {
+        "key": "showWhenIdle",
+        "type": "boolean",
+        "label": "Show the icon when not recording",
+        "defaultValue": false
+      }
+    ]
+  }
+}

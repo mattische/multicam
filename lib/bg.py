@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""multicam bakgrund-bort: kamera -> RVM (ONNX) -> RGBA rawvideo på stdout (för mpv).
-Modell: Robust Video Matting (GPL-3.0), https://github.com/PeterL1n/RobustVideoMatting"""
+"""multicam background removal: camera -> RVM (ONNX) -> RGBA rawvideo on stdout (for mpv).
+Model: Robust Video Matting (GPL-3.0), https://github.com/PeterL1n/RobustVideoMatting"""
 import sys, time, subprocess, argparse, signal
 import numpy as np
 import onnxruntime as ort
@@ -15,7 +15,7 @@ p.add_argument('--threads', type=int, default=2)
 p.add_argument('--seconds', type=float, default=0)
 p.add_argument('--input-format', default='')
 p.add_argument('--model', required=True)
-p.add_argument('--bench', action='store_true', help='skriv ingen video, mät bara')
+p.add_argument('--bench', action='store_true', help='write no video, only measure')
 a = p.parse_args()
 
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))

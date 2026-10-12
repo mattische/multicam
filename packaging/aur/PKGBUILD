@@ -1,0 +1,56 @@
+# Maintainer: mattische <https://github.com/mattische>
+#
+# multicam needs Omarchy (https://omarchy.org) at runtime: it calls omarchy-capture-screenrecording,
+# omarchy-launch-tui, omarchy-capture-region, omarchy-capture-webcam-list and omarchy-shell. Those scripts ship in
+# the "omarchy" package from Omarchy's own pacman repository, which is neither an official Arch repository nor the
+# AUR, so it cannot be listed in depends=(). The app checks for them at start and explains what is missing.
+
+pkgname=multicam
+pkgver=1.4.0
+pkgrel=1
+pkgdesc='Keyboard-driven TUI for Omarchy that records the screen, up to two camera overlays and a microphone to MP4'
+arch=('any')
+url='https://github.com/mattische/multicam'
+license=('MIT')
+depends=(
+  'bash'
+  'hyprland'            # hyprctl
+  'jq'
+  'mpv'                 # camera overlay windows
+  'libpulse'            # pactl
+  'gpu-screen-recorder' # used through omarchy-capture-screenrecording
+)
+optdepends=(
+  'v4l-utils: choose the best camera resolution (v4l2-ctl)'
+  'hyprpicker: pick the ring colour from the screen'
+  'python: background-removal add-on (multicam install-bgremove creates a per-user venv)'
+  'ffmpeg: cropping when following a window, camera capture for the background-removal add-on'
+  'curl: download the background-removal model'
+  'git: notice new releases on GitHub (update check)'
+  'omacut: open the finished recording (from the Omarchy repository)'
+)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/mattische/multicam/archive/refs/tags/v$pkgver.tar.gz")
+# Replace with the real checksum after the v$pkgver tag exists: updpkgsums (pacman-contrib) or makepkg -g
+sha256sums=('SKIP')
+
+package() {
+  cd "$pkgname-$pkgver"
+
+  install -Dm755 bin/multicam "$pkgdir/usr/bin/multicam"
+  install -Dm644 lib/bg.py "$pkgdir/usr/share/multicam/lib/bg.py"
+
+  # Omarchy bar plugin (io.github.mattische.multicam); 'multicam setup-bar' copies it into
+  # ~/.config/omarchy/plugins per user, which multicam also does once at its first start
+  local f
+  for f in shell-plugin/*; do
+    install -Dm644 "$f" "$pkgdir/usr/share/multicam/$f"
+  done
+
+  # Desktop entry: no per-user path, the binary is on PATH (Icon=multicam is the svg below)
+  sed -e 's|@BIN@|multicam|g' multicam.desktop |
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/multicam.desktop"
+  install -Dm644 assets/multicam.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/multicam.svg"
+
+  install -Dm644 README.md "$pkgdir/usr/share/doc/multicam/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/multicam/LICENSE"
+}

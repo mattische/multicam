@@ -3,6 +3,6 @@ Type=Application
 Name=Multicam
 Comment=Record screen, cameras and microphone
 Exec=omarchy-launch-tui --app-id=TUI.float @BIN@
-Icon=camera-video
+Icon=multicam
 Terminal=false
 Categories=AudioVideo;Video;Recorder;

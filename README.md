@@ -13,13 +13,34 @@ remembers all settings between runs, hides itself while recording and shows a bl
 
 ## Requirements
 
-Required: `hyprctl`, `jq`, `mpv`, `pactl`, `gpu-screen-recorder`, `omarchy-capture-screenrecording`,
-`omarchy-launch-tui` (all part of a normal Omarchy install).
+Required: `hyprctl`, `jq`, `mpv`, `pactl`, `gpu-screen-recorder` and Omarchy's `omarchy-capture-screenrecording`,
+`omarchy-capture-region`, `omarchy-launch-tui` (all part of a normal Omarchy install; multicam stops with
+"multicam needs Omarchy" if one of the Omarchy scripts is missing).
 Optional: `v4l2-ctl` (picks camera resolution), `hyprpicker` (colour picker), `omacut` (open result),
-`python3` + `curl` (background-removal add-on).
-Nothing is ever installed with root or through the package manager.
+`ffmpeg` (cropping when following a window), `python3` + `curl` (background-removal add-on), `git` (update check).
+`install.sh` never uses root or the package manager; the AUR package is the system-wide alternative.
 
 ## Install
+
+Two ways; use one, not both (`install.sh` refuses when the package is installed).
+
+### From the AUR (system-wide)
+
+Once the package is published (the PKGBUILD is in [packaging/aur/](packaging/aur/)):
+
+```
+yay -S multicam
+```
+
+This installs `/usr/bin/multicam`, `/usr/share/multicam/` (`lib/bg.py` and the bar plugin files), the app menu entry
+and the icon. A package cannot write to your home folder, so the per-user parts are set up by multicam itself:
+
+- the [bar indicator](#bar-indicator) is installed and enabled at the first start of multicam (once; if you remove it
+  with `multicam setup-bar --remove`, it stays removed);
+- the keybind is optional: `multicam setup-keybind` adds `SUPER + ALT + M`;
+- the background-removal add-on: `multicam install-bgremove` (or the Background removal row in the app).
+
+### Per user with install.sh (no root)
 
 One line (works once the repository is public; until then use the git clone below):
 
@@ -51,20 +72,53 @@ If it cannot be installed (e.g. offline), the installation still completes and t
 repository it came from, so the app can find updates (see [Updating](#updating)).
 
 Files created (and nothing else):
-`~/.local/bin/multicam`, `~/.local/share/multicam/`, `~/.config/multicam/`,
-`~/.local/share/applications/multicam.desktop` and the bar plugin `~/.config/omarchy/plugins/multicam.recording/`
-(enabled with `omarchy plugin enable multicam.recording`). The keybind is one line ending in `-- multicam`.
+`~/.local/bin/multicam`, `~/.local/share/multicam/` (program, `lib/bg.py`, the bar plugin files),
+`~/.config/multicam/`, `~/.local/share/applications/multicam.desktop`,
+`~/.local/share/icons/hicolor/scalable/apps/multicam.svg` and the bar plugin
+`~/.config/omarchy/plugins/io.github.mattische.multicam/` (installed with `multicam setup-bar`, see
+[Bar indicator](#bar-indicator)). The keybind is one line ending in `-- multicam` (`multicam setup-keybind`).
+
 Start it from the app menu ("Multicam"), with the keybind, or run `multicam`
 (it opens in a floating terminal when launched through `omarchy-launch-tui --app-id=TUI.float multicam`).
+
+### Bar indicator
+
+A small Omarchy shell plugin (`io.github.mattische.multicam`, source in [`shell-plugin/`](shell-plugin/)) shows a
+blinking red record icon with the elapsed time while multicam records; a click stops the recording. When not
+recording it is hidden. To keep a record icon in the bar that opens multicam when clicked:
+
+```
+omarchy bar set io.github.mattische.multicam showWhenIdle true --json
+```
+
+```
+multicam setup-bar            # copy the plugin into ~/.config/omarchy/plugins and enable it
+multicam setup-bar --remove   # disable and delete it (remembered: neither the package nor an update adds it again)
+```
+
+`setup-bar` also disables and deletes the indicator of older multicam versions (`multicam.recording`), so there are
+never two icons; other plugins are not touched. The `Bar indicator` setting (`S`) switches the icon off without
+removing the plugin. The plugin is ready to be published on its own as an Omarchy plugin (installed with
+`omarchy plugin add <repo>`), see [shell-plugin/README.md](shell-plugin/README.md) and [packaging/NOTES.md](packaging/NOTES.md).
 
 ## Uninstall
 
 ```
 multicam uninstall      # or ./uninstall.sh ; asks first, --yes skips the question
 ```
-Removes everything above, the keybind line, the bar plugin and the add-on. Your recordings are never touched.
+Removes everything above, the keybind line, the bar plugin (also the old `multicam.recording`) and the add-on. Your
+recordings are never touched.
+
+For the AUR package `multicam uninstall` removes only the per-user files (settings, add-on, bar plugin, keybind) and
+then prints the command for the rest: `sudo pacman -Rns multicam` (pacman never touches home folders).
 
 ## Updating
+
+AUR package: `yay -Syu multicam` (with all other updates). `multicam update` and the `U` key do not update a
+package; they show that command. The startup check compares the version with the newest `v*` release tag on GitHub
+(`git ls-remote --tags`, needs `git`) and shows the command in a green line when a newer release exists.
+
+install.sh:
 
 ```
 multicam update         # compares with origin/main, asks, then installs the new version [--yes]
@@ -74,7 +128,8 @@ At startup the app checks in the background (`git ls-remote`, nothing else is se
 the installed revision. If so the form shows a green line and you can press `U` to update, or ignore it. `U` also
 checks on demand. The update clones the repository into a temporary folder and runs its `install.sh --yes`;
 your settings, the keybind, the bar plugin and the add-on are kept (an update never re-adds what you removed). After updating, restart multicam.
-Turn the startup check off with `UPDATE_CHECK=off` in `~/.config/multicam/config` or `MULTICAM_NO_UPDATE_CHECK=1`.
+Turn the startup check off (both ways of installing) with `UPDATE_CHECK=off` in `~/.config/multicam/config` (or the
+settings view) or `MULTICAM_NO_UPDATE_CHECK=1`.
 The update source is the `origin` URL of the clone you installed from (a private repo needs working git credentials).
 
 ## Usage
@@ -84,8 +139,14 @@ The update source is the `origin` URL of the clone you installed from (a private
 1. Form: choose camera A / B (each "off" or a device; the same device cannot be used twice), shape, ring,
    ring colour and thickness, microphone, desktop audio and screen. Press `F5` (or Enter on the last row).
 2. Preview: the cameras appear and are placed, nothing is recorded yet. Arrange them, then press `Enter` to start recording.
-3. Recording: multicam's window disappears (it moves to a hidden workspace, `special:multicam`) so it is not in the
-   recording, and a blinking red record icon with the elapsed time appears in the bar. The camera windows stay.
+   By default a 3-second countdown with big digits runs first (`Esc` or `q` cancels back to the preview without
+   recording, `Enter` starts at once; set 5 s, 10 s or off in the settings).
+
+   ![The countdown before recording](docs/images/countdown.svg)
+
+3. Recording: multicam's window disappears (it moves to a hidden workspace, `special:multicam`) before the recorder
+   starts, so it is never in the recording (if the recorder fails to start it comes back with a message), and a blinking
+   red record icon with the elapsed time appears in the bar. The camera windows stay.
 4. Stop: click the red icon in the bar, press the keybind (`SUPER + ALT + M`) again, run `multicam stop`, or use
    Omarchy's own stop (Alt+Print). multicam comes back on the workspace you are on, shows the file name and (by
    default) offers to open it in omacut.
@@ -109,7 +170,9 @@ Press `S` in the form. Every change is saved at once to `~/.config/multicam/conf
 | Save recordings to | Omarchy's folder (`~/Videos`) or any folder you type (Enter edits, empty = default; created when needed) |
 | After recording | ask to open in omacut, open in omacut, just show the file |
 | Hide while recording | on, off |
-| Bar indicator | on, off (the plugin stays installed; off means multicam does not show the icon) |
+| Bar indicator | on, off (the plugin stays installed; off means multicam does not show the icon; see [Bar indicator](#bar-indicator)) |
+| Countdown | 3 s, 5 s, 10 s, off (before recording starts; `COUNTDOWN=off\|3\|5\|10`) |
+| Follow window | on, off (window mode: the recording follows the window when it moves; `FOLLOW_WINDOW`) |
 | Arrow step | 20 px (5-100) |
 | Shift + arrow step | 100 px (25-400) |
 | Check for updates | on, off |
@@ -146,8 +209,25 @@ the stored rectangle, so Omarchy records `-w region:WxH+X+Y` and does its normal
 right after start. The video has the physical size of the area (logical size x monitor scale, e.g. 1200x800 on
 a 1.6 scale monitor gives 1920x1280).
 
-Limitations: a window is recorded as the rectangle it had at start; if you move the window the recording does
-not follow. Free-drag area selection needs the mouse (like the colour picker); window selection works with the keyboard.
+Following a window (setting `Follow window`, on by default): in window mode multicam records the whole monitor the
+window is on (Omarchy's monitor capture, native resolution), watches the window's position about ten times a second
+while recording, and moves the camera overlays along so they keep their place on the window. When the recording stops,
+the video is cropped to the window with ffmpeg (the crop position follows the logged positions, `sendcmd` + `crop`),
+re-encoded with VAAPI `h264_vaapi` when available, otherwise `libx264 -preset veryfast -crf 18`; the audio is copied.
+The file is replaced only when ffmpeg succeeds; otherwise the full-monitor recording is kept and the result screen says
+so. multicam shows "Processing…" with a percentage meanwhile. The video has the window's size at start x the monitor
+scale, like a fixed window recording. With `Follow window` off, the window is recorded as the fixed rectangle it had at start.
+
+Limitations: free-drag area selection needs the mouse (like the colour picker); window selection works with the
+keyboard. When following a window:
+- processing takes roughly as long as the recording itself for a 4K monitor (the whole monitor is decoded);
+- a resized window keeps the size it had at start (the crop does not grow or shrink);
+- the crop is clamped to the monitor: a window dragged partly off the monitor, or onto another monitor, stays at the
+  monitor edge (the cameras stay with the crop); a window that is closed keeps its last position;
+- the crop follows the window's position, not its stacking: windows on top of it, or a workspace switch, are recorded
+  as they appear on the monitor;
+- if the window cannot be found when the recording starts, the fixed rectangle is recorded instead.
+- Omarchy's "recording saved" notification thumbnail is made before cropping, so it shows the whole monitor.
 
 ### Keys
 
@@ -186,7 +266,8 @@ Preview / recording screen
 | `c` / `C` | colour picker / hex input |
 | `[` `]` | ring thickness 1-12 px (default 4) |
 | `b` | background removal on / off (add-on) |
-| `Enter` | start recording (from preview; F5 does not start it); multicam then hides until the recording stops |
+| `Enter` | start recording (from preview; F5 does not start it) after the countdown; multicam then hides until the recording stops |
+| `Esc`, `q` during the countdown | cancel, back to the preview (nothing is recorded); `Enter` skips the rest of the countdown |
 | `q`, `Esc` | quit the preview (while recording, if the window is shown: stop, asks first) |
 
 Deviation from the spec: the spec uses ← / → for the preset colours, but on the recording screen the
@@ -245,5 +326,6 @@ evidence are summarised in `docs/TEST-REPORT.md`. Tests record into a scratch di
 and run with no update check. Install tests use `--no-bgremove --no-bar-indicator` so they never download the
 add-on or touch the running Omarchy shell. A quick subset after UI changes:
 `tests/run.py T-L1 T-S1 T-H1 T-B2 T-B4 T-B5 T-B6c T-B6d T-B7` (about 2 minutes).
+`tests/features.py` tests the countdown and window following (about 3 minutes).
 Devices are autodetected (first two cameras, first two non-monitor microphones); override with `MC_CAM_A_DEV`,
 `MC_CAM_A_NAME`, `MC_CAM_B_DEV`, `MC_CAM_B_NAME`, `MC_MIC`, `MC_MIC2` (T-C3v needs two mics), `MC_SCRATCH`.
