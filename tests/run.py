@@ -8,7 +8,6 @@ EVID = os.path.join(SCRATCH, 'evidence')   # utanför repot: bilderna visar kame
 os.makedirs(EVID, exist_ok=True)
 os.makedirs(SCRATCH, exist_ok=True)
 R = Report()
-MIC_C920 = 'alsa_input.usb-046d_HD_Pro_Webcam_C920_5CE7DF0F-02.analog-stereo'
 ORIG_SRC = default_source()
 TESTS = {}
 
@@ -184,7 +183,7 @@ def t_b2():
         s.send(DOWN); s.send(RIGHT); seen.append(('färg', '#ff0000' in s.screen()))
         s.send('C'); s.send('00ff00'); s.send(ENTER); seen.append(('hex', '#00ff00' in s.screen()))
         s.send(DOWN); s.send(RIGHT); s.send(RIGHT); seen.append(('tjocklek', '6 px' in s.screen()))
-        s.send(DOWN); s.send(RIGHT); seen.append(('kamera B', 'Kamera B' in s.screen() and ('FaceTime' in s.screen())))
+        s.send(DOWN); s.send(RIGHT); seen.append(('kamera B', 'Kamera B' in s.screen() and (CAM_B_NAME.split()[0] in s.screen())))
         # B visar nu delrader; hoppa till mic via 'j'
         for _ in range(5): s.send(DOWN)
         s.send(RIGHT); seen.append(('mic', 'ingen' not in s.screen().split('Mikrofon')[1].split('\n')[0]))
@@ -225,7 +224,7 @@ def t_b4():
 
 @test('T-B5')
 def t_b5():
-    conf = cfg().replace('CAM_A_DEV=/dev/video2', 'CAM_A_DEV=/dev/video9').replace('HD Pro Webcam C920', 'Obefintlig Kamera 9000')
+    conf = cfg().replace(f'CAM_A_DEV={CAM_A_DEV}', 'CAM_A_DEV=/dev/video99').replace(CAM_A_NAME, 'Obefintlig Kamera 9000')
     h = make_home('b5', conf)
     s = Session(h, out_dir('b5'))
     try:
@@ -233,7 +232,7 @@ def t_b5():
         scr = s.screen()
         expect('saknas: Obefintlig Kamera 9000' in scr, scr)
         line = [l for l in scr.splitlines() if 'Kamera A' in l][0]
-        expect('HD Pro' not in line and 'FaceTime' not in line, line)
+        expect(CAM_A_NAME not in line and (not CAM_B_NAME or CAM_B_NAME not in line), line)
         s.send('q'); s.wait_exit(5)
         c = open(h + '/.config/multicam/config').read()
         expect('Obefintlig Kamera 9000' in c, 'sparad enhet försvann ur config')
@@ -351,7 +350,7 @@ def t_d34():
 
     # ---- D5: båda kameror, Tab / Shift-Tab, siffror på B
     s = run_session('d5', cfg(shape='circle', ring='on', size=200) + 'CAM_A_RX=100\nCAM_A_RY=100\n'
-                    + 'CAM_B_DEV=/dev/video0\nCAM_B_NAME=FaceTime HD Camera\nCAM_B_SHAPE=rect\nCAM_B_SIZE=180\nCAM_B_RX=600\nCAM_B_RY=100\n')
+                    + CAM_B_CFG + 'CAM_B_SHAPE=rect\nCAM_B_SIZE=180\nCAM_B_RX=600\nCAM_B_RY=100\n')
     errs = []
     try:
         start_to_preview(s)
@@ -482,7 +481,7 @@ def start_recording(s, tmo=20):
 @test('T-C3', 'T-C4', 'T-C1', 'T-C4b', 'T-E1')
 def t_record_main():
     wake()
-    conf = cfg(shape='circle', ring='on') + 'MIC=' + MIC_C920 + '\nMIC_DESC=C920\nDESKTOP_AUDIO=off\n'
+    conf = cfg(shape='circle', ring='on') + 'MIC=' + MIC + '\nMIC_DESC=testmic\nDESKTOP_AUDIO=off\n'
     conf = conf.replace('MIC=\n', '')
     o = out_dir('c4')
     s = run_session('c4', conf, o)
@@ -508,8 +507,8 @@ def t_record_main():
         codecs = {st['codec_type']: st['codec_name'] for st in j['streams']}
         dur = float(j['format']['duration'])
         s.send('n'); s.wait_exit(5)
-        R.add('T-C3', 'GODKÄND' if (during == MIC_C920 and after == before) else 'UNDERKÄND',
-              f'pactl get-default-source: före={before} under={during} efter={after} (förväntat under: {MIC_C920}); ljudström i filen: {"audio" in codecs} (volymmätning av vald källa ej gjord: se rapport)')
+        R.add('T-C3', 'GODKÄND' if (during == MIC and after == before) else 'UNDERKÄND',
+              f'pactl get-default-source: före={before} under={during} efter={after} (förväntat under: {MIC}); ljudström i filen: {"audio" in codecs} (volymmätning av vald källa ej gjord: se rapport)')
         R.add('T-C4', 'GODKÄND' if (codecs.get('video') == 'h264' and codecs.get('audio') == 'aac' and 'mp4' in j['format']['format_name'] and abs(dur - (t_stop - t_start - 0.1)) <= 0.5) else 'UNDERKÄND',
               f'ffprobe: {codecs} format={j["format"]["format_name"]} längd={dur:.2f}s; uppmätt tid start (Omarchys pekarfil)->inspelaren avslutad {t_stop - t_start:.2f}s minus Omarchys 0,1 s trim = {t_stop - t_start - 0.1:.2f}s (tolerans ±0,5 s)')
         rx = r'^screenrecording-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9]{2}_[0-9]{2}\.mp4$'
@@ -607,8 +606,9 @@ def t_e_signals():
 def t_c3_volume():
     """Spela in 5 s med två olika mikrofoner och jämför ffmpeg volumedetect (Omarchys loudnorm jämnar ut, så mäter även rå bakgrund)."""
     wake()
-    mics = {'C920': MIC_C920, 'GenericUSB': 'alsa_input.usb-Generic_USB_Audio-00.analog-stereo',
-            'iD14': 'alsa_input.usb-Audient_Audient_iD14-00.multichannel-input'}
+    if not (MIC and MIC2):
+        return R.add('T-C3v', 'MANUELL', 'kräver två mikrofoner (sätt MC_MIC och MC_MIC2)')
+    mics = {'mic1': MIC, 'mic2': MIC2}
     vals = {}
     for name, mic in mics.items():
         o = out_dir('c3v')
@@ -629,9 +629,9 @@ def t_c3_volume():
             shutil.rmtree(o, ignore_errors=True)
     v = {k: x[0] for k, x in vals.items()}
     ok_def = all(x[1] for x in vals.values())
-    diff = abs(v['C920'] - v['GenericUSB']) if None not in (v['C920'], v['GenericUSB']) else None
+    diff = abs(v['mic1'] - v['mic2']) if None not in (v['mic1'], v['mic2']) else None
     R.add('T-C3v', 'GODKÄND' if (ok_def and diff is not None and diff >= 10) else 'UNDERKÄND',
-          f'mean_volume (dB) per vald mic: {v}; default-source under inspelning = vald mic för alla: {ok_def}; |C920-GenericUSB| = {diff}')
+          f'mean_volume (dB) per vald mic: {v}; default-source under inspelning = vald mic för alla: {ok_def}; |mic1-mic2| = {diff}')
 
 
 @test('T-E2s')
@@ -676,7 +676,7 @@ def t_identical_cams():
         '#!/bin/bash\necho "/dev/video4  Twin Cam (usb-1):"\necho "/dev/video6  Twin Cam (usb-2):"\n')
     os.chmod(stub + '/omarchy-capture-webcam-list', 0o755)
     env = {'PATH': stub + ':' + os.environ['PATH']}
-    conf = cfg().replace('CAM_A_DEV=/dev/video2', 'CAM_A_DEV=/dev/video6').replace('HD Pro Webcam C920', 'Twin Cam') \
+    conf = cfg().replace(f'CAM_A_DEV={CAM_A_DEV}', 'CAM_A_DEV=/dev/video6').replace(CAM_A_NAME, 'Twin Cam') \
         .replace('CAM_B_DEV=\nCAM_B_NAME=\n', 'CAM_B_DEV=/dev/video4\nCAM_B_NAME=Twin Cam\n')
     h = make_home('b5b', conf)
     s = Session(h, out_dir('b5b'), env=env)
@@ -750,7 +750,7 @@ def region_test(tid, capture, rect, label_expect=None):
     o = out_dir('b6' + capture)
     rx, ry, rw, rh = [int(v) for v in re.match(r'(-?\d+),(-?\d+) (\d+)x(\d+)', rect).groups()]
     s = Session(make_home('b6' + capture, cfg(shape='circle', ring='on', size=200, extra='CAPTURE=' + capture + '\n')
-                          + 'CAM_B_DEV=/dev/video0\nCAM_B_NAME=FaceTime HD Camera\nCAM_B_SHAPE=rect\nCAM_B_RING=on\nCAM_B_COLOR=#00aaff\nCAM_B_SIZE=160\n'
+                          + CAM_B_CFG + 'CAM_B_SHAPE=rect\nCAM_B_RING=on\nCAM_B_COLOR=#00aaff\nCAM_B_SIZE=160\n'
                           .replace('CAM_B_DEV=\nCAM_B_NAME=\n', '')),
                 o, env={'PATH': d + ':' + os.environ['PATH']})
     try:
@@ -950,7 +950,7 @@ def t_e3():
 @test('T-X1', 'T-X2')
 def t_x():
     wake()
-    conf = cfg(shape='circle', ring='on') + 'CAM_B_DEV=/dev/video0\nCAM_B_NAME=FaceTime HD Camera\nCAM_B_SHAPE=rect\nCAM_B_RING=on\nCAM_B_COLOR=#00aaff\n' + 'MIC=' + MIC_C920 + '\n'
+    conf = cfg(shape='circle', ring='on') + CAM_B_CFG + 'CAM_B_SHAPE=rect\nCAM_B_RING=on\nCAM_B_COLOR=#00aaff\n' + 'MIC=' + MIC + '\n'
     conf = conf.replace('CAM_B_DEV=\nCAM_B_NAME=\nMIC=\n', '')
     o = out_dir('x1')
     s = run_session('x1', conf, o)
@@ -1046,7 +1046,7 @@ def t_f():
     wake()
     r0 = resource.getrusage(resource.RUSAGE_CHILDREN)
     t0 = time.time()
-    pr = subprocess.Popen([py, REPO + '/lib/bg.py', '--dev', '/dev/video2', '--w', '640', '--h', '360', '--model', model,
+    pr = subprocess.Popen([py, REPO + '/lib/bg.py', '--dev', CAM_A_DEV, '--w', '640', '--h', '360', '--model', model,
                            '--threads', '2', '--seconds', '15'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     nbytes = 0
     while True:
@@ -1061,7 +1061,7 @@ def t_f():
     frames = nbytes / (640 * 360 * 4)
     fps = frames / dt
     R.add('T-F2(fps)', 'GODKÄND' if fps >= 25 else 'UNDERKÄND',
-          f'bg.py --threads 2, C920 640x360, {dt:.1f} s: {frames:.0f} RGBA-rutor = {fps:.1f} fps, CPU ca {cpu:.0f} % av en kärna (python+ffmpeg); stderr: {err.strip()[-120:]}')
+          f'bg.py --threads 2, kamera A 640x360, {dt:.1f} s: {frames:.0f} RGBA-rutor = {fps:.1f} fps, CPU ca {cpu:.0f} % av en kärna (python+ffmpeg); stderr: {err.strip()[-120:]}')
     # TUI-pipeline med bakgrund bort: processer startas och städas (icke-visuellt)
     conf = cfg(shape='circle', ring='on', extra='').replace('CAM_A_BG=off', 'CAM_A_BG=on')
     os.makedirs(home + '/.config/multicam', exist_ok=True)

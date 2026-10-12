@@ -14,11 +14,8 @@ multicam install-bgremove     # optional background-removal add-on
 Requirements: Omarchy with Hyprland 0.56+ and Lua config. Only Lua dispatches are used (see BRIEF.md).
 
 ## Running the tests elsewhere
-The tests were written for the original machine and contain hardware-specific values:
-- `tests/mclib.py`: `SCRATCH=/tmp/claude-1000/multicam-tests`, `CAMS` (C920 = /dev/video2, FaceTime = /dev/video0), `BASE_CFG`.
-- `tests/run.py`: `MIC_C920` (PulseAudio source name) and camera paths in some tests.
-
-Adjust these to the new machine's devices first (`omarchy-capture-webcam-list`, `pactl list short sources`).
+Devices are autodetected (first two cameras from `omarchy-capture-webcam-list`, first two non-monitor sources from `pactl`). Override with env vars:
+`MC_CAM_A_DEV`, `MC_CAM_A_NAME`, `MC_CAM_B_DEV`, `MC_CAM_B_NAME`, `MC_MIC`, `MC_MIC2` (T-C3v needs two mics), `MC_SCRATCH`.
 Run with `python3 tests/run.py [T-ID ...]`; the screen must be unlocked.
 Screenshots/frames are written outside the repo and must never be committed (they show the camera and screen).
 

@@ -30,7 +30,7 @@ def shapes():
 
 def record():
     o = out_dir('vc')
-    conf = cfg(shape='circle', ring='on', size=260) + 'CAM_A_RX=100\nCAM_A_RY=500\nCAM_B_DEV=/dev/video0\nCAM_B_NAME=FaceTime HD Camera\nCAM_B_SHAPE=rect\nCAM_B_RING=on\nCAM_B_COLOR=#00aaff\nCAM_B_SIZE=200\nCAM_B_RX=500\nCAM_B_RY=500\n'
+    conf = cfg(shape='circle', ring='on', size=260) + 'CAM_A_RX=100\nCAM_A_RY=500\n' + CAM_B_CFG + 'CAM_B_SHAPE=rect\nCAM_B_RING=on\nCAM_B_COLOR=#00aaff\nCAM_B_SIZE=200\nCAM_B_RX=500\nCAM_B_RY=500\n'
     s = Session(make_home('vc', conf), o)
     try:
         start_to_preview(s); wait_until(lambda: len(geo()) == 2, 8)

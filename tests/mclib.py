@@ -3,7 +3,7 @@ import os, pty, sys, time, json, subprocess, select, re, shutil, fcntl, termios,
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, 'bin', 'multicam')
-SCRATCH = '/tmp/claude-1000/multicam-tests'
+SCRATCH = os.environ.get('MC_SCRATCH', f'/tmp/claude-{os.getuid()}/multicam-tests')
 ANSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]')
 
 
@@ -218,10 +218,30 @@ UP, DOWN, RIGHT, LEFT = '\x1b[A', '\x1b[B', '\x1b[C', '\x1b[D'
 SUP, SDOWN, SRIGHT, SLEFT = '\x1b[1;2A', '\x1b[1;2B', '\x1b[1;2C', '\x1b[1;2D'
 PGUP, PGDN, F5, ESC, ENTER, TAB = '\x1b[5~', '\x1b[6~', '\x1b[15~', '\x1b', '\r', '\t'
 
-CAMS = {'C920': '/dev/video2', 'FaceTime': '/dev/video0'}
+def _detect_cams():
+    out = subprocess.run('omarchy-capture-webcam-list', capture_output=True, text=True).stdout
+    return [(d, re.sub(r'\s*\(usb.*$', '', n).strip()) for d, n in re.findall(r'^(/dev/video\d+)\s+(.*)$', out, re.M)]
 
-BASE_CFG = """CAM_A_DEV=/dev/video2
-CAM_A_NAME=HD Pro Webcam C920
+
+def _detect_mics():
+    out = subprocess.run('pactl list short sources', shell=True, capture_output=True, text=True).stdout
+    return [l.split('\t')[1] for l in out.splitlines() if '.monitor' not in l]
+
+
+# Enheter: autodetekteras (första två kamerorna / första två mikrofonerna) och kan skrivas över med miljövariabler:
+#   MC_CAM_A_DEV, MC_CAM_A_NAME, MC_CAM_B_DEV, MC_CAM_B_NAME  (kamera A/B; namn = som i omarchy-capture-webcam-list)
+#   MC_MIC, MC_MIC2  (PulseAudio-källnamn, se `pactl list short sources`; MC_MIC2 används av T-C3v)
+_c, _m = _detect_cams() + [('', '')] * 2, _detect_mics() + [''] * 2
+CAM_A_DEV = os.environ.get('MC_CAM_A_DEV', _c[0][0])
+CAM_A_NAME = os.environ.get('MC_CAM_A_NAME', _c[0][1])
+CAM_B_DEV = os.environ.get('MC_CAM_B_DEV', _c[1][0])
+CAM_B_NAME = os.environ.get('MC_CAM_B_NAME', _c[1][1])
+MIC = os.environ.get('MC_MIC', _m[0])
+MIC2 = os.environ.get('MC_MIC2', _m[1])
+CAM_B_CFG = f'CAM_B_DEV={CAM_B_DEV}\nCAM_B_NAME={CAM_B_NAME}\n'
+
+BASE_CFG = """CAM_A_DEV={cam_dev}
+CAM_A_NAME={cam_name}
 CAM_A_SHAPE={shape}
 CAM_A_RING={ring}
 CAM_A_COLOR={color}
@@ -237,7 +257,7 @@ SCREEN=
 
 
 def cfg(shape='rect', ring='off', color='#ff3399', thick=4, size=240, extra=''):
-    return BASE_CFG.format(shape=shape, ring=ring, color=color, thick=thick, size=size) + extra
+    return BASE_CFG.format(cam_dev=CAM_A_DEV, cam_name=CAM_A_NAME, shape=shape, ring=ring, color=color, thick=thick, size=size) + extra
 
 
 def wait_until(fn, timeout=10, step=0.1):
