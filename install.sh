@@ -1,19 +1,24 @@
 #!/bin/bash
-# multicam - installation. Inga roträttigheter, inga paket installeras.
-# Flaggor: --yes (inga frågor, ingen genväg), --keybind (lägg in genväg), --no-keybind
+# multicam - install. No root, no packages installed.
+# Flags: --yes (no questions, no keybind, no add-on), --keybind / --no-keybind, --bgremove / --no-bgremove
 SRC=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 DATA=$HOME/.local/share/multicam
 BIN=$HOME/.local/bin/multicam
 APPS=$HOME/.local/share/applications
 BINDINGS=$HOME/.config/hypr/bindings.lua
 KEYCOMBO="SUPER + ALT + M"
-yes=0; kb=ask
+# English, or Swedish if the system language is Swedish (MULTICAM_LANG=sv|en overrides)
+case ${MULTICAM_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}} in sv*) sv=1 ;; *) sv=0 ;; esac
+_() { if ((sv)); then printf '%s\n' "$2"; else printf '%s\n' "$1"; fi; }
+yes=0; kb=ask; bg=ask
 for a in "$@"; do
   case $a in
     --yes | -y) yes=1 ;;
     --keybind) kb=yes ;;
     --no-keybind) kb=no ;;
-    *) echo "Okänd flagga: $a" >&2; exit 2 ;;
+    --bgremove) bg=yes ;;
+    --no-bgremove) bg=no ;;
+    *) echo "Unknown flag: $a" >&2; exit 2 ;;
   esac
 done
 
@@ -22,11 +27,11 @@ for c in hyprctl jq mpv pactl gpu-screen-recorder omarchy-capture-screenrecordin
   command -v "$c" >/dev/null || missing+=("$c")
 done
 if ((${#missing[@]})); then
-  echo "Saknade beroenden (installera själv, inget installeras här): ${missing[*]}" >&2
+  echo "$(_ "Missing dependencies (install them yourself, nothing is installed here):" "Saknade beroenden (installera själv, inget installeras här):") ${missing[*]}" >&2
   exit 1
 fi
-for c in v4l2-ctl hyprpicker omacut grim; do
-  command -v "$c" >/dev/null || echo "Obs: valfritt program saknas: $c"
+for c in v4l2-ctl hyprpicker omacut grim git; do
+  command -v "$c" >/dev/null || echo "$(_ "Note: optional program missing:" "Obs: valfritt program saknas:") $c"
 done
 
 install -Dm755 "$SRC/bin/multicam" "$DATA/bin/multicam"
@@ -34,25 +39,39 @@ install -Dm644 "$SRC/lib/bg.py" "$DATA/lib/bg.py"
 mkdir -p "$HOME/.local/bin" "$APPS" "$HOME/.config/multicam"
 ln -sfn "$DATA/bin/multicam" "$BIN"
 sed "s|@BIN@|$BIN|" "$SRC/multicam.desktop" >"$APPS/multicam.desktop"
+# remember where this came from, so 'multicam update' / the update check can compare with origin/main
+if git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
+  git -C "$SRC" rev-parse HEAD >"$DATA/rev"
+  git -C "$SRC" remote get-url origin >"$DATA/source" 2>/dev/null || rm -f "$DATA/source"
+fi
 
 if [[ $kb == ask && $yes == 0 && -t 0 ]]; then
-  read -r -p "Lägg in genvägen $KEYCOMBO i ~/.config/hypr/bindings.lua? [j/N] " a
+  read -r -p "$(_ "Add the shortcut $KEYCOMBO to ~/.config/hypr/bindings.lua? [y/N] " "Lägg in genvägen $KEYCOMBO i ~/.config/hypr/bindings.lua? [j/N] ")" a
   [[ $a == [jJyY]* ]] && kb=yes
 fi
 if [[ $kb == yes ]]; then
   if [[ ! -f $BINDINGS ]]; then
-    echo "Hittade inte $BINDINGS - ingen genväg inlagd."
+    _ "Could not find $BINDINGS - no shortcut added." "Hittade inte $BINDINGS - ingen genväg inlagd."
   elif grep -q -- '-- multicam$' "$BINDINGS"; then
-    echo "Genvägen finns redan."
+    _ "The shortcut already exists." "Genvägen finns redan."
   elif grep -q "\"$KEYCOMBO\"" "$BINDINGS"; then
-    echo "$KEYCOMBO används redan i $BINDINGS - ingen genväg inlagd."
+    _ "$KEYCOMBO is already used in $BINDINGS - no shortcut added." "$KEYCOMBO används redan i $BINDINGS - ingen genväg inlagd."
   else
-    # säkerställ radbrytning före vår rad (filen kan sakna avslutande newline)
+    # make sure our line starts on its own line (the file may lack a trailing newline)
     [[ -s $BINDINGS && -n $(tail -c1 "$BINDINGS") ]] && echo >>"$BINDINGS"
     printf 'o.bind("%s", "Multicam", "omarchy-launch-tui --app-id=TUI.float %s") -- multicam\n' "$KEYCOMBO" "$BIN" >>"$BINDINGS"
-    echo "Genväg $KEYCOMBO inlagd (raden slutar med '-- multicam')."
+    _ "Shortcut $KEYCOMBO added (the line ends with '-- multicam')." "Genväg $KEYCOMBO inlagd (raden slutar med '-- multicam')."
   fi
 fi
 
-echo "Multicam installerat: $BIN"
-echo "Valfritt: 'multicam install-bgremove' för bakgrund bort."
+# optional add-on: transparent camera background (about 300 MB). Interactive: the add-on installer explains and asks.
+if [[ $bg == yes ]]; then
+  "$BIN" install-bgremove --yes
+elif [[ $bg == ask && $yes == 0 && -t 0 ]]; then
+  read -r -p "$(_ "Also set up transparent camera background (add-on, ~300 MB)? [y/N] " "Installera även transparent kamerabakgrund (tillägg, ca 300 MB)? [j/N] ")" a
+  [[ $a == [jJyY]* ]] && "$BIN" install-bgremove
+fi
+
+_ "multicam installed: $BIN" "multicam installerat: $BIN"
+[[ -x $DATA/bg/venv/bin/python ]] || _ "Optional: 'multicam install-bgremove' (or select the Background removal row in the app) adds transparent camera background." "Valfritt: 'multicam install-bgremove' (eller välj raden Bakgrund bort i appen) lägger till transparent kamerabakgrund."
+_ "Update later with 'multicam update' (the app also tells you when a new version exists)." "Uppdatera senare med 'multicam update' (appen säger också till när en ny version finns)."

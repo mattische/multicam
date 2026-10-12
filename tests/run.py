@@ -64,6 +64,8 @@ EXPECTED_INSTALL = {
     '.local/bin/multicam',
     '.local/share/multicam/bin/multicam',
     '.local/share/multicam/lib/bg.py',
+    '.local/share/multicam/rev',
+    '.local/share/multicam/source',
     '.local/share/applications/multicam.desktop',
     '.config/multicam',
 }
@@ -106,7 +108,7 @@ def t_install():
     new = {os.path.relpath(p, home) for p in set(after) - set(before)}
     new = {p for p in new if p not in ('.local', '.local/bin', '.local/share', '.local/share/applications', '.cache')}
     # kataloger under multicam räknas inte separat
-    new = {p for p in new if not p.startswith('.local/share/multicam/') or p.count('/') > 3 or p.endswith(('bin/multicam', 'lib/bg.py'))}
+    new = {p for p in new if not p.startswith('.local/share/multicam/') or p.count('/') > 3 or p.endswith(('bin/multicam', 'lib/bg.py', '/rev', '/source'))}
     new = {p for p in new if p not in ('.local/share/multicam', '.local/share/multicam/bin', '.local/share/multicam/lib')}
     expect(new == EXPECTED_INSTALL, f'filuppsättning avviker: extra={sorted(new - EXPECTED_INSTALL)} saknas={sorted(EXPECTED_INSTALL - new)}')
     d_hypr = diff_r(pristine + '/.config/hypr', home + '/.config/hypr')
@@ -177,15 +179,15 @@ def t_b2():
         expect(s.wait_for('Kamera A', 5), 'form')
         scr0 = s.screen()
         seen = []
-        # Rader: cam A, form, ring, kantfärg, tjocklek, cam B, mic, daudio, screen, start
+        # Rader: cam A, form, ring, kantfärg, tjocklek, cam B, bgsetup, mic, daudio, screen, start
         s.send(DOWN); s.send(RIGHT); seen.append(('form', 'cirkel' in s.screen() and '● cirkel' in s.screen()))
         s.send(DOWN); s.send(ENTER); seen.append(('ring', '[x] på' in s.screen()))
         s.send(DOWN); s.send(RIGHT); seen.append(('färg', '#ff0000' in s.screen()))
         s.send('C'); s.send('00ff00'); s.send(ENTER); seen.append(('hex', '#00ff00' in s.screen()))
         s.send(DOWN); s.send(RIGHT); s.send(RIGHT); seen.append(('tjocklek', '6 px' in s.screen()))
         s.send(DOWN); s.send(RIGHT); seen.append(('kamera B', 'Kamera B' in s.screen() and (CAM_B_NAME.split()[0] in s.screen())))
-        # B visar nu delrader; hoppa till mic via 'j'
-        for _ in range(5): s.send(DOWN)
+        # B visar nu delrader + raden 'Bakgrund bort' (tillägget är inte installerat i testets HOME); hoppa till mic
+        for _ in range(6): s.send(DOWN)
         s.send(RIGHT); seen.append(('mic', 'ingen' not in s.screen().split('Mikrofon')[1].split('\n')[0]))
         s.send(DOWN); s.send(ENTER); seen.append(('skrivbordsljud', '[x] på' in s.screen().split('Skrivbordsljud')[1].split('\n')[0]))
         s.send(DOWN); s.send(RIGHT); seen.append(('spela in', '● område' in s.screen()))
@@ -1077,6 +1079,62 @@ def t_f():
         R.add('T-F2', 'MANUELL', f'TUI med bg=on: mpv+python startade ({len(procs)} processer, fönster {g}), städat efter q: {probs or "ja"}; genomskinlig bakgrund (skrivbord syns) ej verifierat visuellt: skärmen låst')
     finally:
         sess.close()
+
+
+@test('T-L1')
+def t_language():
+    """Språkval: engelska som standard, svenska när systemets språk är svenska; MULTICAM_LANG och LC_ALL väger tyngst."""
+    def usage(**e):
+        env = {k: v for k, v in os.environ.items() if k not in ('MULTICAM_LANG', 'LC_ALL', 'LC_MESSAGES', 'LANG')}
+        env.update(e)
+        return subprocess.run([BIN, '--help'], env=env, capture_output=True, text=True).stdout
+    en, sv = 'start the TUI', 'starta TUI:t'
+    cases = {'LANG=en_US.UTF-8': (dict(LANG='en_US.UTF-8'), en), 'LANG=sv_SE.UTF-8': (dict(LANG='sv_SE.UTF-8'), sv),
+             'ingen LANG': ({}, en), 'LC_ALL=sv_SE väger över LANG=en': (dict(LC_ALL='sv_SE.UTF-8', LANG='en_US.UTF-8'), sv),
+             'MULTICAM_LANG=en väger över LANG=sv': (dict(MULTICAM_LANG='en', LANG='sv_SE.UTF-8'), en)}
+    bad = [k for k, (e, want) in cases.items() if want not in usage(**e)]
+    expect(not bad, f'fel språk för: {bad}')
+    # TUI på engelska
+    s = Session(make_home('l1', cfg()), out_dir('l1'), env={'MULTICAM_LANG': 'en'})
+    try:
+        s.wait_for('Camera A', 5)
+        scr = s.screen()
+        expect('Preview cameras' in scr and 'Microphone' in scr and 'Kamera' not in scr, scr)
+        s.send('q'); s.wait_exit(5)
+    finally:
+        s.close()
+    R.add('T-L1', 'GODKÄND', 'språkval: ' + ', '.join(cases) + '; TUI på engelska (Camera A, Microphone, Preview cameras) utan svenska rester')
+
+
+@test('T-U1')
+def t_update():
+    """Uppdatering mot ett lokalt git-förråd: ingen uppdatering -> check-update 1; ny commit -> check-update 0; update --yes hämtar och installerar."""
+    base = os.path.join(SCRATCH, 'upd'); shutil.rmtree(base, ignore_errors=True); os.makedirs(base)
+    git = lambda *a, cwd=base: subprocess.run(['git', *a], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+    git('init', '-q', '--bare', '-b', 'main', 'origin.git')
+    git('clone', '-q', REPO, 'clone')
+    git('remote', 'set-url', 'origin', base + '/origin.git', cwd=base + '/clone')
+    for f in ('bin', 'lib', 'install.sh', 'uninstall.sh', 'multicam.desktop'):   # arbetskopian (kan vara ocommitad)
+        subprocess.run(['cp', '-a', f'{REPO}/{f}', base + '/clone/'], check=True)
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'working copy', '--allow-empty', cwd=base + '/clone')
+    git('push', '-q', 'origin', 'HEAD:main', cwd=base + '/clone')
+    home = os.path.join(base, 'home'); os.makedirs(home)
+    env = dict(os.environ, HOME=home)
+    mc = home + '/.local/bin/multicam'
+    run = lambda *a: subprocess.run(a, env=env, capture_output=True, text=True)
+    r = run(base + '/clone/install.sh', '--yes'); expect(r.returncode == 0, r.stdout + r.stderr)
+    expect(run(mc, 'check-update').returncode == 1, 'check-update: uppdatering trots att inget ändrats')
+    u = run(mc, 'update', '--yes'); expect('uppdaterat' in u.stdout, 'update när allt är aktuellt: ' + u.stdout + u.stderr)
+    c = base + '/clone'
+    s = re.sub(r'(?m)^VERSION=\S+', 'VERSION=9.9.9', open(c + '/bin/multicam').read())
+    open(c + '/bin/multicam', 'w').write(s)
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'bump', cwd=c); git('push', '-q', 'origin', 'HEAD:main', cwd=c)
+    expect(run(mc, 'check-update').returncode == 0, 'check-update missar ny commit')
+    r = run(mc, 'update', '--yes'); expect(r.returncode == 0, r.stdout + r.stderr)
+    expect('9.9.9' in run(mc, '--version').stdout, 'ny version inte installerad')
+    expect(run(mc, 'check-update').returncode == 1, 'check-update efter uppdatering')
+    R.add('T-U1', 'GODKÄND', 'lokalt git-förråd som origin: check-update 1 -> ny commit -> 0 -> update --yes installerar 9.9.9 -> check-update 1 igen; HOME-kopia, aldrig verkligt HOME')
+    shutil.rmtree(base, ignore_errors=True)
 
 
 def main():

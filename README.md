@@ -4,11 +4,12 @@ A small keyboard-driven TUI for [Omarchy](https://omarchy.org) (Hyprland, Arch L
 the screen, up to two camera overlays and a chosen microphone into a plain MP4.
 Cameras are floating windows (rectangle or circle, optional coloured ring) that you move and
 resize with the keyboard. Recording is done by Omarchy's own `omarchy-capture-screenrecording`;
-multicam only replaces its `--with-webcam` part. The UI text is Swedish.
+multicam only replaces its `--with-webcam` part. The UI is in English, or Swedish when the system language
+is Swedish (see [Language](#language)).
 
 ![multicam recording: code editor with a round and a rectangular camera overlay and the multicam TUI](docs/images/overview.svg)
 
-<sub>Illustrations, not screenshots.</sub>
+<sub>Illustrations, not screenshots (they show the Swedish UI text).</sub>
 
 ## Requirements
 
@@ -29,10 +30,14 @@ git clone git@github.com:mattische/multicam.git && cd multicam && ./install.sh
 Options:
 
 ```
-./install.sh            # asks whether to add the optional keybind
-./install.sh --yes      # no questions, no keybind
-./install.sh --keybind  # also add SUPER + ALT + M to ~/.config/hypr/bindings.lua
+./install.sh                  # asks about the optional keybind and the optional background-removal add-on
+./install.sh --yes            # no questions, no keybind, no add-on
+./install.sh --keybind        # also add SUPER + ALT + M to ~/.config/hypr/bindings.lua
+./install.sh --bgremove       # also install the transparent-camera-background add-on (~300 MB)
 ```
+(`--no-keybind` / `--no-bgremove` answer "no" without asking.) The add-on can also be installed later, see
+[Background-removal add-on](#background-removal-add-on). The installer remembers the git revision and the
+repository it came from, so the app can find updates (see [Updating](#updating)).
 
 Files created (and nothing else):
 `~/.local/bin/multicam`, `~/.local/share/multicam/`, `~/.config/multicam/`,
@@ -47,11 +52,30 @@ multicam uninstall      # or ./uninstall.sh ; asks first, --yes skips the questi
 ```
 Removes everything above, the keybind line and the add-on. Your recordings are never touched.
 
+## Updating
+
+```
+multicam update         # compares with origin/main, asks, then installs the new version [--yes]
+multicam check-update   # exit 0 if an update is available (for scripts)
+```
+At startup the app checks in the background (`git ls-remote`, nothing else is sent) whether `origin/main` is newer than
+the installed revision. If so the form shows a green line and you can press `U` to update, or ignore it. `U` also
+checks on demand. The update clones the repository into a temporary folder and runs its `install.sh --yes`;
+your settings, the keybind and the add-on are kept. After updating, restart multicam.
+Turn the startup check off with `UPDATE_CHECK=off` in `~/.config/multicam/config` or `MULTICAM_NO_UPDATE_CHECK=1`.
+The update source is the `origin` URL of the clone you installed from (a private repo needs working git credentials).
+
+## Language
+
+English by default; Swedish when the system language is Swedish (`LC_ALL`, `LC_MESSAGES` or `LANG` starting with `sv`).
+Override with `MULTICAM_LANG=en` or `MULTICAM_LANG=sv`. Applies to the app, `install.sh` and the command-line messages.
+Translations live in the `SV` table at the top of `bin/multicam` (the English text is the key).
+
 ## Usage
 
 ![The multicam form](docs/images/form.svg)
 
-1. Form: choose camera A / B (each "av" or a device; the same device cannot be used twice), shape, ring,
+1. Form: choose camera A / B (each "off" or a device; the same device cannot be used twice), shape, ring,
    ring colour and thickness, microphone, desktop audio and screen. Press `F5` (or Enter on the last row).
 2. Preview: the cameras appear and are placed, nothing is recorded yet. Arrange them, then press `Enter` to start recording.
 3. While recording the same keys work. `q`/`Esc` asks for confirmation, stops, shows the file name and
@@ -65,13 +89,13 @@ The selected microphone is set as default source only while recording and always
 
 ### What to record: full screen, area or window
 
-The form row `Spela in` selects `hel skärm` (full screen, default), `område` (free rectangle) or
-`fönster` (a window). When you press `F5` in area/window mode, multicam first runs Omarchy's own picker
+The form row `Record` selects `full screen` (default), `area` (free rectangle) or
+`window`. When you press `F5` in area/window mode, multicam first runs Omarchy's own picker
 (`omarchy-capture-region region` / `windows`): drag a rectangle with the mouse, or for windows use
 Tab / arrow keys and Enter (Esc cancels and returns to the form with a message; nothing is started).
 The picked rectangle becomes the camera bounds, so cameras, snapping (1-9) and clamping always stay
-inside the recorded area. The preview header shows `Område WxH @ X,Y` / `Fönster: class - title`.
-Press `o` in the preview to pick again (cameras are re-clamped). The `Skärm` row only applies to full screen.
+inside the recorded area. The preview header shows `Area WxH @ X,Y` / `Window: class - title`.
+Press `o` in the preview to pick again (cameras are re-clamped). The `Screen` row only applies to full screen.
 
 How it works: the recording is still started by `omarchy-capture-screenrecording` (without `--fullscreen`);
 multicam puts a tiny shim `omarchy-capture-region` first in `PATH` for that single start call, which answers with
@@ -96,6 +120,8 @@ Form screen
 | `c` | colour picker (`hyprpicker`, needs a mouse click) |
 | ← → on the colour row | cycle the 8 preset colours |
 | `F5` | preview cameras |
+| `U` | check for / install an update |
+| Enter on `Remove background` | install the background-removal add-on (when not installed) |
 | `q`, `Esc` | quit (settings are saved) |
 
 Preview / recording screen
@@ -103,7 +129,7 @@ Preview / recording screen
 | Key | Action |
 |---|---|
 | `Tab` | select camera A / B |
-| ↑ ↓ ← → | move 20 px (`[FLYTTA]`) or grow/shrink ±10 % (`[STORLEK]`: ↑ → bigger, ↓ ← smaller) |
+| ↑ ↓ ← → | move 20 px (`[MOVE]`) or grow/shrink ±10 % (`[SIZE]`: ↑ → bigger, ↓ ← smaller) |
 | Shift + arrows | move 100 px, or ±25 % in size mode |
 | `m` | toggle move / size mode (shown in the status line) |
 | `o` | pick the area / window again (area and window modes, not while recording) |
@@ -137,7 +163,9 @@ multicam only touches windows with class `MulticamA` / `MulticamB` and processes
 ## Background-removal add-on
 
 ```
-multicam install-bgremove      # ~300 MB Python venv + 14 MB model, all in ~/.local/share/multicam/bg/
+./install.sh --bgremove        # at install time (or answer "y" when the installer asks) ...
+multicam install-bgremove      # ... or any time later (also: select the "Remove background" row in the form and press Enter)
+                               # ~300 MB Python venv + 14 MB model, all in ~/.local/share/multicam/bg/
 multicam uninstall-bgremove    # removes that one folder
 multicam check-bgremove        # verifies the model's SHA256
 ```
@@ -145,7 +173,7 @@ Camera -> ONNX Robust Video Matting (mobilenetv3) -> RGBA -> `mpv` with transpar
 threads. The model (GPL-3.0, <https://github.com/PeterL1n/RobustVideoMatting>) is downloaded from the
 project's release and checked against a fixed SHA256; on mismatch it is deleted and installation stops.
 Quality: soft edges, dark clothes can become partly transparent (expected, not a bug). The per-camera
-option appears in the form only when the add-on is installed. Toggling it while running restarts that
+option appears in the form once the add-on is installed (until then the form shows an install row). Toggling it while running restarts that
 camera window briefly.
 
 ## Known limitations
@@ -165,4 +193,7 @@ camera window briefly.
 ## Tests
 
 `tests/run.py [T-ID ...]` runs the automatic tests (pty driving, `hyprctl clients -j`, `ffprobe`); results and
-evidence are summarised in `docs/TEST-REPORT.md`. Tests record into a scratch directory via `MULTICAM_OUTPUT_DIR`.
+evidence are summarised in `docs/TEST-REPORT.md`. Tests record into a scratch directory via `MULTICAM_OUTPUT_DIR`
+and run with `MULTICAM_LANG=sv` (they match Swedish text) and no update check.
+Devices are autodetected (first two cameras, first two non-monitor microphones); override with `MC_CAM_A_DEV`,
+`MC_CAM_A_NAME`, `MC_CAM_B_DEV`, `MC_CAM_B_NAME`, `MC_MIC`, `MC_MIC2` (T-C3v needs two mics), `MC_SCRATCH`.

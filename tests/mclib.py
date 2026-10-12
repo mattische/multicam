@@ -4,6 +4,9 @@ import os, pty, sys, time, json, subprocess, select, re, shutil, fcntl, termios,
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, 'bin', 'multicam')
 SCRATCH = os.environ.get('MC_SCRATCH', f'/tmp/claude-{os.getuid()}/multicam-tests')
+# testerna förväntar sig svensk text och ska inte göra nätverksanrop
+os.environ['MULTICAM_LANG'] = 'sv'
+os.environ['MULTICAM_NO_UPDATE_CHECK'] = '1'
 ANSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]')
 
 
