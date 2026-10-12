@@ -21,13 +21,22 @@ Nothing is ever installed with root or through the package manager.
 
 ## Install
 
-The repository is private; you need `gh`/ssh access to `mattische/multicam`:
+One line (works once the repository is public; until then use the git clone below):
+
+```
+curl -fsSL https://raw.githubusercontent.com/mattische/multicam/main/install.sh | bash
+```
+
+Flags go after `bash -s --`, e.g. `curl -fsSL … | bash -s -- --yes --keybind`. The script clones the repository into a
+temporary folder, installs from there and removes the folder again; questions are asked on the terminal as usual.
+
+From a clone (the repository is private for now; you need `gh`/ssh access to `mattische/multicam`):
 
 ```
 git clone git@github.com:mattische/multicam.git && cd multicam && ./install.sh
 ```
 
-Options:
+Options (same for both ways):
 
 ```
 ./install.sh                  # asks about the optional keybind

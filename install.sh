@@ -2,7 +2,29 @@
 # multicam - install. No root, no packages installed.
 # Flags: --yes (no questions, no keybind), --keybind / --no-keybind, --no-bgremove (skip the background-removal add-on),
 #        --no-bar-indicator (skip the Quickshell bar plugin that blinks red while recording)
-SRC=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+#        curl -fsSL https://raw.githubusercontent.com/mattische/multicam/main/install.sh | bash [-s -- flags]
+# read from stdin (curl | bash) there is no script file, so never use the current folder as the source
+SRC=
+[[ -f ${BASH_SOURCE[0]} ]] && SRC=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+
+# bootstrap: run without the repository next to it (curl | bash, or a lone downloaded install.sh) -> clone it into a
+# temporary folder and run the install.sh from there. MULTICAM_REPO overrides the git URL.
+if [[ ! -f $SRC/bin/multicam || ! -f $SRC/multicam.desktop ]]; then
+  repo=${MULTICAM_REPO:-https://github.com/mattische/multicam.git}
+  command -v git >/dev/null || { echo "git is needed to download multicam." >&2; exit 1; }
+  tmp=$(mktemp -d) || exit 1
+  echo "Downloading multicam from $repo ..."
+  if ! GIT_TERMINAL_PROMPT=0 git clone -q --depth 1 -b main "$repo" "$tmp/multicam"; then
+    rm -rf "$tmp"
+    echo "Could not download $repo (offline, or the repository is not public)." >&2
+    exit 1
+  fi
+  bash "$tmp/multicam/install.sh" "$@"
+  rc=$?
+  rm -rf "$tmp"
+  exit $rc
+fi
+
 DATA=$HOME/.local/share/multicam
 BIN=$HOME/.local/bin/multicam
 APPS=$HOME/.local/share/applications
@@ -44,8 +66,10 @@ if git -C "$SRC" rev-parse HEAD >/dev/null 2>&1; then
   git -C "$SRC" remote get-url origin >"$DATA/source" 2>/dev/null || rm -f "$DATA/source"
 fi
 
-if [[ $kb == ask && $yes == 0 && -t 0 ]]; then
-  read -r -p "Add the shortcut $KEYCOMBO to ~/.config/hypr/bindings.lua? [y/N] " a
+# questions are read from the terminal, so they also work when this script itself arrives on stdin (curl | bash)
+if [[ $kb == ask && $yes == 0 ]] && { exec 3</dev/tty; } 2>/dev/null; then
+  read -r -u 3 -p "Add the shortcut $KEYCOMBO to ~/.config/hypr/bindings.lua? [y/N] " a
+  exec 3<&-
   [[ $a == [jJyY]* ]] && kb=yes
 fi
 if [[ $kb == yes ]]; then
