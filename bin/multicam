@@ -2,7 +2,7 @@
 # multicam - tangentbordsstyrd inspelning av skärm + upp till två kameror + mikrofon (Omarchy/Hyprland)
 # Bash. Ändrar inget i /usr eller i Omarchys filer. Se README.md.
 
-VERSION=1.1.0
+VERSION=1.2.0
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 APPDIR=${SELF%/*/*}
 DATA_DIR=$HOME/.local/share/multicam
@@ -138,8 +138,43 @@ SV['(omacut is not installed)']='(omacut finns inte installerat)'
 SV['The recording could not be completed (no file found).']='Inspelningen kunde inte slutföras (ingen fil hittades).'
 SV['multicam: %s is missing (required).']='multicam: saknar %s (krävs).'
 SV['multicam: already running (PID %s).']='multicam: körs redan (PID %s).'
+SV['AUDIO']='LJUD'
+SV['Area']='Område'
+SV['CAMERAS']='KAMEROR'
+SV['CAPTURE']='INSPELNING'
+SV['Open in omacut?']='Öppna i omacut?'
+SV['Preview cameras']='Förhandsvisa kameror'
+SV['Start recording']='Starta inspelning'
+SV['The background-removal add-on is already installed.']='Tillägget bakgrund bort är redan installerat.'
+SV['arrange the cameras first - nothing is recorded yet']='ställ in kamerorna först – inget spelas in än'
+SV['background']='bakgrund'
+SV['big steps']='stora steg'
+SV['camera']='kamera'
+SV['change']='ändra'
+SV['colour']='färg'
+SV['colour picker']='färgväljare'
+SV['hex code']='hexkod'
+SV['last: %sx%s @ %s,%s']='senaste: %sx%s @ %s,%s'
+SV['mode']='läge'
+SV['move']='flytta'
+SV['move/size']='flytta/storlek'
+SV['new area']='nytt område'
+SV['next colour']='nästa färg'
+SV['no']='nej'
+SV['pick a new one']='välj nytt'
+SV['position']='position'
+SV['preview']='förhandsvisa'
+SV['quit']='avsluta'
+SV['row']='rad'
+SV['select']='välj'
+SV['stop']='stoppa'
+SV['the recording does not start yet']='inspelningen startar inte än'
+SV['update']='uppdatera'
+SV['yes']='ja'
 LANG_SEL=${MULTICAM_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}
 _() { local s=$1 nl=''; shift; [[ $s == *'\n' ]] && { s=${s%'\n'}; nl='\n'; }; [[ $LANG_SEL == sv* ]] && s=${SV[$s]:-$s}; printf -- "$s$nl" "$@"; }
+declare -A TRM=()   # för ritningen (ingen underprocess): "${TRM[text]:-text}"
+if [[ $LANG_SEL == sv* ]]; then for _k in "${!SV[@]}"; do TRM[$_k]=${SV[$_k]}; done; unset _k; fi
 
 log() { [[ -n $LOGF ]] && printf '%(%T)T %s\n' -1 "$*" >>"$LOGF"; return 0; }
 hc() { hyprctl "$@" >/dev/null 2>&1; }
@@ -297,6 +332,7 @@ bg_verify() { # 0 = modellen finns och har rätt SHA256
 cmd_install_bgremove() {
   local yes=0 a
   for a in "$@"; do [[ $a == --yes || $a == -y ]] && yes=1; done
+  if bg_installed && bg_verify; then _ 'The background-removal add-on is already installed.\n'; return 0; fi
   command -v python3 >/dev/null || { _ 'python3 is missing.\n'; return 1; }
   command -v curl >/dev/null || { _ 'curl is missing.\n'; return 1; }
   _ 'Background removal (transparent camera background) is an add-on using the Robust Video Matting model (mobilenetv3)\nby Peter Lin, GPL-3.0 licence: https://github.com/PeterL1n/RobustVideoMatting\n'
@@ -357,7 +393,7 @@ cmd_update() {
     [[ $a == [jJyY]* ]] || { _ 'Cancelled.\n'; return 1; }
   fi
   tmp=$(mktemp -d) || return 1
-  if GIT_TERMINAL_PROMPT=0 git clone -q --depth 1 -b main "$(update_src)" "$tmp/src" && "$tmp/src/install.sh" --yes; then
+  if GIT_TERMINAL_PROMPT=0 git clone -q --depth 1 -b main "$(update_src)" "$tmp/src" && "$tmp/src/install.sh" --yes $(bg_installed || echo --no-bgremove); then   # tillägget: behåll nuvarande läge
     rm -rf "$tmp"
     _ 'Updated. Settings, keybind and the background-removal add-on are kept.\n'
   else
@@ -395,8 +431,10 @@ MIC=""; MIC_DESC=""; MIC_MISSING=""; DAUDIO=on; SCREEN=""; SCREEN_MISSING=""
 UPDCHECK=on
 CAPTURE=screen   # screen | region | window
 AX=0; AY=0; AW=0; AH=0; AREA_LABEL=""; PICK_PID=""
+LAST_AREA=""; AREA_REUSE=on; FORCE_PICK=0   # senast valda område (X,Y,W,H) och om det återanvänds
+GEOM=""     # vilken sparad uppsättning positioner kamerorna just nu använder: screen | area (tom = ingen förhandsvisning än)
 DEVS=(); DEVNAMES=(); MICS=(); MICDESC=(); MONS=()
-MODE=move; SEL=0; REC=0; REC_START=0; CLEANED=0; SAVED=0; MSG=""; PROMPT=""
+MODE=move; SEL=0; REC=0; REC_START=0; CLEANED=0; DIRTY=0; MSG=""; PROMPT=""
 UPDATED=0; SCR=form; ROW=0; STTY=""; MON=""; MX=0; MY=0; MW=0; MH=0; IN_ALT=0
 RESULT_FILE=""; STOP_PID=""; TUI_ADDR=""; HUPPED=0; START_PID=""
 
@@ -405,6 +443,7 @@ load_config() {
   for id in "${CAMS[@]}"; do
     C[$id.dev]=""; C[$id.name]=""; C[$id.shape]=circle; C[$id.ring]=on; C[$id.color]="#${PRESETS[0]}"
     C[$id.thick]=4; C[$id.bg]=off; C[$id.rx]=""; C[$id.ry]=""; C[$id.size]=240; C[$id.missing]=""
+    C[$id.arx]=""; C[$id.ary]=""; C[$id.asize]=""
   done
   MIC="__default__"
   [[ -f $CONF ]] || return 0
@@ -420,6 +459,11 @@ load_config() {
       CAM_[AB]_RX) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.rx]=$v ;;
       CAM_[AB]_RY) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.ry]=$v ;;
       CAM_[AB]_SIZE) [[ $v =~ ^[0-9]+$ ]] && C[${k:4:1}.size]=$v ;;
+      CAM_[AB]_ARX) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.arx]=$v ;;
+      CAM_[AB]_ARY) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.ary]=$v ;;
+      CAM_[AB]_ASIZE) [[ $v =~ ^[0-9]+$ ]] && C[${k:4:1}.asize]=$v ;;
+      LAST_AREA) [[ $v =~ ^-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+$ ]] && LAST_AREA=$v ;;
+      AREA_REUSE) [[ $v == on || $v == off ]] && AREA_REUSE=$v ;;
       MIC) MIC=$v ;;
       MIC_DESC) MIC_DESC=$v ;;
       DESKTOP_AUDIO) [[ $v == on || $v == off ]] && DAUDIO=$v ;;
@@ -428,32 +472,54 @@ load_config() {
       CAPTURE) [[ $v == screen || $v == region || $v == window ]] && CAPTURE=$v ;;
     esac
   done <"$CONF"
-  for id in "${CAMS[@]}"; do C[$id.rx0]=${C[$id.rx]}; C[$id.ry0]=${C[$id.ry]}; C[$id.size0]=${C[$id.size]}; done
+  # positioner/storlek finns i två uppsättningar: hel skärm (s*) och område/fönster (a*, relativt området)
+  for id in "${CAMS[@]}"; do C[$id.srx]=${C[$id.rx]}; C[$id.sry]=${C[$id.ry]}; C[$id.ssize]=${C[$id.size]}; done
 }
 
-save_config() {
-  ((SAVED)) && return 0
+sync_geom() { # för över kamerornas aktuella position/storlek till den uppsättning de hör till
+  local id p=s
+  [[ -n $GEOM ]] || return 0
+  [[ $GEOM == area ]] && p=a
+  for id in "${CAMS[@]}"; do
+    cam_active "$id" || continue
+    [[ -n ${C[$id.rx]} ]] || continue
+    C[$id.${p}rx]=${C[$id.rx]}; C[$id.${p}ry]=${C[$id.ry]}; C[$id.${p}size]=${C[$id.size]}
+  done
+}
+
+use_geom() { # use_geom screen|area: hämtar den sparade uppsättningen till kamerornas aktuella värden
+  local id p=s
+  GEOM=$1; [[ $GEOM == area ]] && p=a
+  for id in "${CAMS[@]}"; do
+    C[$id.rx]=${C[$id.${p}rx]}; C[$id.ry]=${C[$id.${p}ry]}
+    C[$id.size]=${C[$id.${p}size]:-${C[$id.ssize]:-240}}
+    [[ -n ${C[$id.rx]} && -n ${C[$id.ry]} ]] || { C[$id.rx]=""; C[$id.ry]=""; }
+  done
+}
+
+save_config() { # skrivs direkt vid varje ändring (och vid avslut), så nästa start får samma inställningar
   [[ -n ${C[A.shape]:-} ]] || return 0
   mkdir -p "$CONF_DIR" || return 0
-  local id dev name mic desc scr rx ry
+  sync_geom
+  local id dev name mic desc scr k
   {
     for id in "${CAMS[@]}"; do
       dev=${C[$id.dev]}; name=${C[$id.name]}
       if [[ -z $dev && -n ${C[$id.missing]} ]]; then dev=${C[$id.sdev]}; name=${C[$id.sname]}; fi  # B5: saknad enhet behålls
       printf 'CAM_%s_DEV=%s\nCAM_%s_NAME=%s\nCAM_%s_SHAPE=%s\nCAM_%s_RING=%s\nCAM_%s_COLOR=%s\nCAM_%s_THICK=%s\nCAM_%s_BG=%s\nCAM_%s_SIZE=%s\n' \
         "$id" "$dev" "$id" "$name" "$id" "${C[$id.shape]}" "$id" "${C[$id.ring]}" "$id" "${C[$id.color]}" \
-        "$id" "${C[$id.thick]}" "$id" "${C[$id.bg]}" "$id" "$([[ $CAPTURE == screen ]] && echo "${C[$id.size]}" || echo "${C[$id.size0]}")"
-      if [[ $CAPTURE == screen ]]; then rx=${C[$id.rx]}; ry=${C[$id.ry]}; else rx=${C[$id.rx0]}; ry=${C[$id.ry0]}; fi   # positioner i delområde sparas inte
-      [[ -n $rx ]] && printf 'CAM_%s_RX=%s\nCAM_%s_RY=%s\n' "$id" "$rx" "$id" "$ry"
+        "$id" "${C[$id.thick]}" "$id" "${C[$id.bg]}" "$id" "${C[$id.ssize]:-240}"
+      [[ -n ${C[$id.srx]} ]] && printf 'CAM_%s_RX=%s\nCAM_%s_RY=%s\n' "$id" "${C[$id.srx]}" "$id" "${C[$id.sry]}"
+      for k in arx ary asize; do [[ -n ${C[$id.$k]} ]] && printf 'CAM_%s_%s=%s\n' "$id" "${k^^}" "${C[$id.$k]}"; done
     done
     mic=$MIC; desc=$MIC_DESC
     [[ $mic == __default__ ]] && mic=""
     if [[ -n $MIC_MISSING ]]; then mic=$MIC_MISSING; fi
     printf 'MIC=%s\nMIC_DESC=%s\nDESKTOP_AUDIO=%s\n' "$mic" "$desc" "$DAUDIO"
     scr=$SCREEN; [[ -n $SCREEN_MISSING ]] && scr=$SCREEN_MISSING
-    printf 'SCREEN=%s\nCAPTURE=%s\nUPDATE_CHECK=%s\n' "$scr" "$CAPTURE" "$UPDCHECK"
+    printf 'SCREEN=%s\nCAPTURE=%s\nLAST_AREA=%s\nAREA_REUSE=%s\nUPDATE_CHECK=%s\n' "$scr" "$CAPTURE" "$LAST_AREA" "$AREA_REUSE" "$UPDCHECK"
   } >"$CONF.tmp" && mv "$CONF.tmp" "$CONF"
-  SAVED=1
+  DIRTY=0
 }
 
 list_devices() {
@@ -717,8 +783,20 @@ stop_cam() { # stänger en kamera (egna PID:er + klass)
   save_pids
 }
 
-pick_area() { # kör Omarchys väljare; sätter AX AY AW AH AREA_LABEL. 0 = vald, 1 = avbrutet/ogiltigt (MSG satt)
+last_area_ok() { # det sparade området finns och dess övre vänstra hörn ligger på en ansluten skärm
+  [[ $LAST_AREA =~ ^(-?[0-9]+),(-?[0-9]+),([0-9]+),([0-9]+)$ ]] || return 1
+  hyprctl monitors -j 2>/dev/null | jq -e --argjson x "${BASH_REMATCH[1]}" --argjson y "${BASH_REMATCH[2]}" \
+    'any(.[]; $x >= .x and $y >= .y and $x < .x + (.width / .scale) and $y < .y + (.height / .scale))' >/dev/null 2>&1
+}
+
+pick_area() { # kör Omarchys väljare (eller återanvänder senaste området); sätter AX AY AW AH AREA_LABEL. 0 = vald, 1 = avbrutet/ogiltigt (MSG satt)
   local mode=region out rc g c
+  if [[ $CAPTURE == region && $AREA_REUSE == on && $FORCE_PICK == 0 ]] && last_area_ok; then
+    IFS=, read -r AX AY AW AH <<<"$LAST_AREA"
+    AREA_LABEL=$(_ 'Area %sx%s @ %s,%s' "$AW" "$AH" "$AX" "$AY")
+    return 0
+  fi
+  FORCE_PICK=0
   [[ $CAPTURE == window ]] && mode=windows
   if [[ $CAPTURE == window ]]; then MSG=$(_ 'The picker is open: choose a window (Tab/arrows + Enter, Esc cancels)')
   else MSG=$(_ 'The picker is open: drag an area with the mouse (Esc cancels)'); fi
@@ -743,6 +821,7 @@ pick_area() { # kör Omarchys väljare; sätter AX AY AW AH AREA_LABEL. 0 = vald
     AREA_LABEL=$(_ 'Window: %s %sx%s @ %s,%s' "${c:-$(_ 'unknown')}" "$AW" "$AH" "$AX" "$AY")
   else
     AREA_LABEL=$(_ 'Area %sx%s @ %s,%s' "$AW" "$AH" "$AX" "$AY")
+    LAST_AREA="$AX,$AY,$AW,$AH"; DIRTY=1
   fi
   return 0
 }
@@ -755,7 +834,9 @@ start_preview() {
   load_geom || { MSG=$(_ 'Could not find the screen.'); return 1; }
   if [[ $CAPTURE != screen ]]; then   # kamerorna ska ligga INNANFÖR det inspelade området
     apply_area
-    for id in "${CAMS[@]}"; do C[$id.rx]=""; C[$id.ry]=""; done
+    use_geom area
+  else
+    use_geom screen
   fi
   default_layout
   for id in "${CAMS[@]}"; do cam_active "$id" && launch_cam "$id"; done
@@ -764,6 +845,7 @@ start_preview() {
     if wait_mapped "$id"; then clamp_cam "$id"; apply_cam "$id"
     else MSG=$(_ 'Camera %s did not open (is the device used by something else?)' "$id"); fi
   done
+  save_config
   return 0
 }
 
@@ -771,6 +853,18 @@ start_preview() {
 # Inspelning
 ###############################################################################
 focused_monitor() { hyprctl monitors -j 2>/dev/null | jq -r 'first(.[]|select(.focused)).name'; }
+GSR_CACHE=1; GSR_AT=0
+gsr_running_cached() { # för formuläret: pgrep högst en gång i sekunden
+  local now; printf -v now '%(%s)T' -1
+  ((now != GSR_AT)) && { gsr_running; GSR_CACHE=$?; GSR_AT=$now; }
+  return $GSR_CACHE
+}
+FM_CACHE=""; FM_AT=0
+focused_monitor_cached() { # för ritningen: högst ett hyprctl-anrop per sekund
+  local now; printf -v now '%(%s)T' -1
+  ((now != FM_AT)) && { FM_CACHE=$(focused_monitor); FM_AT=$now; }
+  return 0
+}
 
 tui_address() { # fönstret vars pid är en förfader till den här processen (terminalen)
   local pids=" " p=$$ i
@@ -869,9 +963,95 @@ read_key() { # 0 = tangent i KEY, 1 = EOF, 2 = timeout
 }
 
 SW=""
-swatch() { local h=${1#\#}; SW=$(printf '\e[48;2;%d;%d;%dm  \e[0m' $((16#${h:0:2})) $((16#${h:2:2})) $((16#${h:4:2}))); }
+swatch() { local h=${1#\#}; printf -v SW '\e[48;2;%d;%d;%dm   \e[0m' $((16#${h:0:2})) $((16#${h:2:2})) $((16#${h:4:2})); }
 
 fmt_time() { local s=$1; printf '%02d:%02d' $((s / 60)) $((s % 60)); }
+
+# --- utseende ---
+# Färger från Omarchys aktiva tema (~/.local/state/omarchy/current/theme/colors.toml), annars terminalens egen
+# palett (som Omarchy också sätter efter temat). NO_COLOR stänger av färgerna.
+shopt -s extglob
+declare -A TC=()
+R=$'\e[0m'; BO=$'\e[1m'
+ACC="" FG="" SUB="" MUT="" RED="" GRN="" YEL="" SELB="" BTN="" KEYC=""
+tfg() { if [[ -n ${TC[$1]:-} ]]; then printf '\e[38;2;%sm' "${TC[$1]}"; else printf '\e[%sm' "$2"; fi; }
+tbg() { if [[ -n ${TC[$1]:-} ]]; then printf '\e[48;2;%sm' "${TC[$1]}"; else printf '\e[%sm' "$2"; fi; }
+theme_init() {
+  local f=${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current/theme/colors.toml line h
+  TC=()
+  if [[ -r $f ]]; then
+    while IFS= read -r line; do
+      [[ $line =~ ^[[:space:]]*([a-z_]+)[[:space:]]*=[[:space:]]*\"#([0-9a-fA-F]{6})\" ]] || continue
+      h=${BASH_REMATCH[2]}
+      TC[${BASH_REMATCH[1]}]="$((16#${h:0:2}));$((16#${h:2:2}));$((16#${h:4:2}))"
+    done <"$f"
+  fi
+  [[ -n ${NO_COLOR:-} ]] && return 0
+  ACC=$(tfg accent 34); FG=$(tfg foreground 39); SUB=$(tfg dark_foreground 2); MUT=$(tfg muted 90)
+  RED=$(tfg red 31); GRN=$(tfg green 32); YEL=$(tfg yellow 33)
+  SELB=$(tbg selection '48;5;237')
+  BTN="$(tbg accent 44)$(tfg background 30)$BO"     # knapp: temats bakgrundsfärg på accentfärgen
+  KEYC="$(tbg lighter_background '48;5;236')$ACC$BO"  # tangent-"chip" i hjälpraden
+}
+
+TR=34; TCOL=100; W=76
+term_size() {
+  local s; s=$(stty size 2>/dev/null)
+  [[ $s =~ ^([0-9]+)\ ([0-9]+)$ ]] && { TR=${BASH_REMATCH[1]}; TCOL=${BASH_REMATCH[2]}; }
+  ((TR > 4)) || TR=34; ((TCOL > 20)) || TCOL=100
+  W=$((TCOL - 4)); ((W > 76)) && W=76
+}
+VL=0
+vlen() { local p=${1//$'\e'\[*([0-9;?])[a-zA-Z]/}; VL=${#p}; }   # synlig längd (utan färgkoder)
+HRL=""
+hr() { local p; printf -v p '%*s' "$W" ''; HRL="$MUT${p// /─}$R"; }
+HL=""
+hl_line() { # markerad rad: accentstreck i första kolumnen + temats markeringsfärg över hela bredden
+  local c=${1# } pad=""
+  c=${c//"$R"/"$R$SELB"}
+  vlen "$1"; ((VL < W)) && printf -v pad '%*s' $((W - VL)) ''
+  HL="$SELB$ACC▌$R$SELB$c$pad$R"
+}
+CHIPL=()
+chips() { # chips tangent beskrivning ... -> hjälprader (radbrutna efter W) i CHIPL[]
+  CHIPL=()
+  local line="" vl=0 t tl
+  while (($# >= 2)); do
+    t="$KEYC $1 $R $SUB$2$R"; tl=$((${#1} + 3 + ${#2}))
+    if ((vl && vl + 3 + tl > W)); then CHIPL+=("$line"); line=""; vl=0; fi
+    ((vl)) && { line+="   "; vl=$((vl + 3)); }
+    line+=$t; vl=$((vl + tl))
+    shift 2
+  done
+  [[ -n $line ]] && CHIPL+=("$line")
+}
+OUT=()
+flush_out() { # ritar OUT[] uppifrån i ett enda skriv (ingen flimmer), två teckens marginal
+  local l buf=$'\e[H' n=0
+  for l in "${OUT[@]}"; do
+    ((n++ >= TR - 1)) && break
+    buf+=$'\e[2K  '"$l"$'\n'
+  done
+  printf '%s\e[J' "$buf"
+}
+radio() { # radio <aktivt index> <alternativ>... -> RAD
+  local a=$1 i=0 x; RAD=""; shift
+  for x; do
+    ((i)) && RAD+="   "
+    if ((i == a)); then RAD+="$ACC●$R $FG$BO$x$R"; else RAD+="$SUB○ $x$R"; fi
+    i=$((i + 1))
+  done
+}
+toggle() { if [[ $1 == on ]]; then RAD="$ACC●$R $FG${TRM['on']:-on}$R"; else RAD="$SUB○ ${TRM['off']:-off}$R"; fi; }
+MSGL=""
+msg_line() { # meddelande/fråga överst i sidfoten
+  if [[ -n $PROMPT ]]; then MSGL="$ACC$BO❯$R $FG$BO$PROMPT$R"
+  elif [[ -n $MSG ]]; then MSGL="$ACC•$R $FG$MSG$R"
+  else MSGL=""; fi
+}
+HDRL=""
+header_line() { HDRL="$ACC$BO󰕧  multicam$R  $SUB$VERSION$R${1:+   $1}"; }
+padr() { PADV=$1; ((${#1} < $2)) && printf -v PADV '%s%*s' "$1" $(($2 - ${#1})) ''; }   # utfyllnad räknad i tecken (inte byte)
 
 # --- formulär ---
 RT=(); RI=()
@@ -886,65 +1066,115 @@ build_rows() {
     fi
   done
   bg_installed || { RT+=(bgsetup); RI+=(""); }
-  RT+=(mic daudio capture screen start); RI+=("" "" "" "" "")
+  RT+=(mic daudio capture); RI+=("" "" "")
+  [[ $CAPTURE == region && -n $LAST_AREA ]] && { RT+=(area); RI+=(""); }
+  RT+=(screen start); RI+=("" "")
 }
 
-cam_label() { local n; n=${C[$1.name]}; echo "${n:-av}"; }
+cam_label() { local n; n=${C[$1.name]}; echo "${n:-${TRM['off']:-off}}"; }
 
 draw_form() {
-  local i t id label val line n
-  build_rows
+  local i t id label val hint line sub_row dim n PADV
+  local -a body=() bopt=() head=() foot=()
+  local selb=0
+  build_rows; term_size
   ((ROW >= ${#RT[@]})) && ROW=$((${#RT[@]} - 1))
-  printf '\e[H'
-  printf '\e[2K\e[1m multicam %s\e[0m  -  %s\n' "$VERSION" "$(_ 'screen + cameras + microphone')"
-  if [[ -s $RUN/update ]]; then printf '\e[2K\e[1;32m %s\e[0m\n' "$(_ 'A new version is available - press U to update')"; else printf '\e[2K\n'; fi
+  header_line; head+=("$HDRL")
+  head+=("$SUB${TRM['screen + cameras + microphone']:-screen + cameras + microphone}$R")
+  [[ -s $RUN/update ]] && head+=("$GRN$BO↑$R $GRN${TRM['A new version is available - press U to update']:-A new version is available - press U to update}$R")
   for i in "${!RT[@]}"; do
-    t=${RT[$i]}; id=${RI[$i]}; val=""
+    t=${RT[$i]}; id=${RI[$i]}; val=""; hint=""; sub_row=0; dim=0
     case $t in
       cam)
-        label="$(_ 'Camera') $id"; val=$(cam_label "$id")
-        [[ -n ${C[$id.missing]} ]] && val+="   $(printf '\e[33m')⚠ $(_ 'missing'): ${C[$id.missing]}$(printf '\e[0m')"
-        ;;
-      shape) label="   $(_ 'shape')"
-        if [[ ${C[$id.shape]} == circle ]]; then val="● $(_ 'circle')   ○ $(_ 'rectangle')"; else val="○ $(_ 'circle')   ● $(_ 'rectangle')"; fi ;;
-      ring) label="   $(_ 'ring')"; [[ ${C[$id.ring]} == on ]] && val="[x] $(_ 'on')" || val="[ ] $(_ 'off')" ;;
-      color) label="   $(_ 'border colour')"; swatch "${C[$id.color]}"; val="$SW ${C[$id.color]}   $(_ '(←/→ presets, c picker, C/Enter hex code)')" ;;
-      thick) label="   $(_ 'thickness')"; val="${C[$id.thick]} px   (←/→ 1-12)" ;;
-      bg) label="   $(_ 'remove background')"; [[ ${C[$id.bg]} == on ]] && val="[x] $(_ 'on')" || val="[ ] $(_ 'off')" ;;
-      bgsetup) label="$(_ 'Remove background')"; val="$(_ 'not installed - press Enter to install (transparent camera background)')" ;;
+        if [[ $id == A ]]; then body+=("" "$SUB$BO${TRM['CAMERAS']:-CAMERAS}$R"); bopt+=(1 1); else body+=(""); bopt+=(1); fi
+        label="${TRM['Camera']:-Camera} $id"
+        if cam_active "$id"; then val="$FG$BO${C[$id.name]:-${TRM['off']:-off}}$R"; else val="$SUB${C[$id.name]:-${TRM['off']:-off}}$R"; fi
+        [[ -n ${C[$id.missing]} ]] && val+="   $YEL⚠ ${TRM['missing']:-missing}: ${C[$id.missing]}$R"
+        hint="←→" ;;
+      shape) sub_row=1; label=${TRM['shape']:-shape}
+        if [[ ${C[$id.shape]} == circle ]]; then radio 0 "${TRM['circle']:-circle}" "${TRM['rectangle']:-rectangle}"; else radio 1 "${TRM['circle']:-circle}" "${TRM['rectangle']:-rectangle}"; fi
+        val=$RAD ;;
+      ring) sub_row=1; label=${TRM['ring']:-ring}; toggle "${C[$id.ring]}"; val=$RAD ;;
+      color) sub_row=1; label=${TRM['border colour']:-border colour}; swatch "${C[$id.color]}"; val="$SW $FG${C[$id.color]}$R"; hint="←→" ;;
+      thick) sub_row=1; label=${TRM['thickness']:-thickness}
+        local bar on off; printf -v on '%*s' "${C[$id.thick]}" ''; printf -v off '%*s' $((12 - C[$id.thick])) ''
+        val="$ACC${on// /━}$MUT${off// /─}$R $FG${C[$id.thick]} px$R"; hint="←→" ;;
+      bg) sub_row=1; label=${TRM['remove background']:-remove background}; toggle "${C[$id.bg]}"; val=$RAD ;;
+      bgsetup) label=${TRM['Remove background']:-Remove background}; val="$YEL${TRM['not installed - press Enter to install (transparent camera background)']:-not installed - press Enter to install (transparent camera background)}$R" ;;
       mic)
-        label="$(_ 'Microphone')"
-        if [[ -n $MIC ]]; then val=${MIC_DESC:-$MIC}; else val=$(_ 'none'); fi
-        [[ -n $MIC_MISSING ]] && val+="   $(printf '\e[33m')⚠ $(_ 'missing'): $MIC_MISSING$(printf '\e[0m')"
-        ;;
-      daudio) label="$(_ 'Desktop audio')"; [[ $DAUDIO == on ]] && val="[x] $(_ 'on')" || val="[ ] $(_ 'off')" ;;
+        body+=("" "$SUB$BO${TRM['AUDIO']:-AUDIO}$R"); bopt+=(1 1)
+        label=${TRM['Microphone']:-Microphone}
+        if [[ -n $MIC ]]; then val="$FG${MIC_DESC:-$MIC}$R"; else val="$SUB${TRM['none']:-none}$R"; fi
+        [[ -n $MIC_MISSING ]] && val+="   $YEL⚠ ${TRM['missing']:-missing}: $MIC_MISSING$R"
+        hint="←→" ;;
+      daudio) label=${TRM['Desktop audio']:-Desktop audio}; toggle "$DAUDIO"; val=$RAD ;;
       capture)
-        label="$(_ 'Record')"
-        local o1 o2 o3; o1=$(_ 'full screen'); o2=$(_ 'area'); o3=$(_ 'window')
+        body+=("" "$SUB$BO${TRM['CAPTURE']:-CAPTURE}$R"); bopt+=(1 1)
+        label=${TRM['Record']:-Record}
         case $CAPTURE in
-          screen) val="● $o1   ○ $o2   ○ $o3" ;;
-          region) val="○ $o1   ● $o2   ○ $o3   $(_ '(chosen with the mouse when you press F5)')" ;;
-          window) val="○ $o1   ○ $o2   ● $o3   $(_ '(chosen with Tab/arrows + Enter at F5)')" ;;
+          screen) radio 0 "${TRM['full screen']:-full screen}" "${TRM['area']:-area}" "${TRM['window']:-window}" ;;
+          region) radio 1 "${TRM['full screen']:-full screen}" "${TRM['area']:-area}" "${TRM['window']:-window}" ;;
+          window) radio 2 "${TRM['full screen']:-full screen}" "${TRM['area']:-area}" "${TRM['window']:-window}" ;;
         esac
-        ;;
+        val=$RAD; hint="←→" ;;
+      area)
+        label=${TRM['Area']:-Area}
+        local la; IFS=, read -r -a la <<<"$LAST_AREA"
+        if [[ $AREA_REUSE == on ]]; then radio 0 "$(_ 'last: %sx%s @ %s,%s' "${la[2]}" "${la[3]}" "${la[0]}" "${la[1]}")" "${TRM['pick a new one']:-pick a new one}"
+        else radio 1 "$(_ 'last: %sx%s @ %s,%s' "${la[2]}" "${la[3]}" "${la[0]}" "${la[1]}")" "${TRM['pick a new one']:-pick a new one}"; fi
+        val=$RAD ;;
       screen)
-        label="$(_ 'Screen')"
-        if [[ -z $SCREEN ]]; then val="$(_ 'focused') ($(focused_monitor))"; else val=$SCREEN; fi
-        [[ -n $SCREEN_MISSING ]] && val+="   $(printf '\e[33m')⚠ $(_ 'missing'): $SCREEN_MISSING$(printf '\e[0m')"
-        [[ $CAPTURE != screen ]] && val="$val   $(_ '(only used for full screen)')"
-        ;;
-      start) label=""; val="▶ $(_ 'Preview cameras (the recording does not start yet)')" ;;
+        label=${TRM['Screen']:-Screen}
+        if [[ -z $SCREEN ]]; then focused_monitor_cached; val="$FG${TRM['focused']:-focused} ($FM_CACHE)$R"; else val="$FG$SCREEN$R"; fi
+        [[ -n $SCREEN_MISSING ]] && val+="   $YEL⚠ ${TRM['missing']:-missing}: $SCREEN_MISSING$R"
+        [[ $CAPTURE != screen ]] && { dim=1; val="$SUB${val//"$FG"/}   ${TRM['(only used for full screen)']:-(only used for full screen)}$R"; }
+        hint="←→" ;;
+      start)
+        body+=(""); bopt+=(1)
+        if ((i == ROW)); then line=" $BTN  ▶  ${TRM['Preview cameras']:-Preview cameras}  $R"; else line=" $ACC$BO[ ▶  ${TRM['Preview cameras']:-Preview cameras} ]$R"; fi
+        line+="  $SUB${TRM['the recording does not start yet']:-the recording does not start yet}$R"
+        ((i == ROW)) && selb=${#body[@]}
+        body+=("$line"); bopt+=(0)
+        continue ;;
     esac
-    if [[ $t == start ]]; then line=" $val"; else printf -v line ' %-18s %s' "$label" "$val"; fi
-    if ((i == ROW)); then printf '\e[2K\e[7m%s\e[0m\n' "$line"
-    elif [[ $t == screen && $CAPTURE != screen ]]; then printf '\e[2K\e[2m%s\e[0m\n' "$line"
-    else printf '\e[2K%s\n' "$line"; fi
+    local ind=' ' lw=19 ls=$FG
+    ((sub_row)) && { ind='   '; lw=17; label=${label^}; ls=$SUB; }
+    ((i == ROW)) && ls=$FG$BO
+    padr "$label" $lw
+    line="$ind$ls$PADV$R $val"
+    if ((i == ROW)); then
+      [[ -n $hint ]] && line+="  $SUB$hint$R"
+      hl_line "$line"; line=$HL; selb=${#body[@]}
+    elif ((dim)); then line="$SUB${line//"$FG"/}$R"
+    fi
+    body+=("$line"); bopt+=(0)
   done
-  printf '\e[2K\n'
-  gsr_running && printf '\e[2K\e[33m %s\e[0m\n' "$(_ 'Note: a recording is already running - do not start a new one.')"
-  printf '\e[2K %s\n' "${PROMPT:-$MSG}"
-  printf '\e[2K\e[2m %s\e[0m\n' "$(_ '↑↓ row  ←→ change  Enter toggle/select  C hex code  c colour picker  F5 preview  U update  q quit')"
-  printf '\e[J'
+  # sidfot
+  gsr_running_cached && foot+=("$YEL▲ ${TRM['Note: a recording is already running - do not start a new one.']:-Note: a recording is already running - do not start a new one.}$R")
+  msg_line; hr; foot+=("$MSGL" "$HRL")
+  local ctx=()
+  case ${RT[$ROW]} in
+    color) ctx=(c "${TRM['colour picker']:-colour picker}" C "${TRM['hex code']:-hex code}") ;;
+  esac
+  chips "↑↓" "${TRM['row']:-row}" "←→" "${TRM['change']:-change}" "⏎" "${TRM['select']:-select}" "${ctx[@]}" F5 "${TRM['preview']:-preview}" U "${TRM['update']:-update}" q "${TRM['quit']:-quit}"
+  foot+=("${CHIPL[@]}")
+  fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
+}
+
+fit_body() { # får body[] att rymmas: först bort med tomrader/rubriker, sedan ett fönster runt den markerade raden
+  local avail=$((TR - 1 - ${#head[@]} - ${#foot[@]})) i nb=() ns=0 start
+  ((${#body[@]} <= avail)) && return 0
+  for i in "${!body[@]}"; do
+    ((bopt[i])) && continue
+    ((i == selb)) && ns=${#nb[@]}
+    nb+=("${body[$i]}")
+  done
+  body=("${nb[@]}"); selb=$ns
+  ((avail < 1)) && avail=1
+  ((${#body[@]} <= avail)) && return 0
+  start=$((selb - avail / 2)); ((start < 0)) && start=0
+  ((start > ${#body[@]} - avail)) && start=$((${#body[@]} - avail))
+  body=("${body[@]:start:avail}")
 }
 
 cycle_idx() { # cycle_idx <antal> <nuvarande> <delta> -> ny index (0..n-1)
@@ -986,6 +1216,7 @@ form_change() { # delta ±1
       MIC=${opts[$idx]}; MIC_DESC=${optn[$idx]}; MIC_MISSING=""
       ;;
     daudio) [[ $DAUDIO == on ]] && DAUDIO=off || DAUDIO=on ;;
+    area) [[ $AREA_REUSE == on ]] && AREA_REUSE=off || AREA_REUSE=on ;;
     capture)
       local order=(screen region window)
       idx=0
@@ -1037,11 +1268,11 @@ pick_hyprpicker() { # c: starta hyprpicker (kräver musklick)
 }
 
 shell_out() { # kör ett kommando på vanliga skärmen (för frågor/utskrift) och återgår till TUI:t
-  printf '\e[?25h\e[?1049l'; IN_ALT=0
+  printf '\e[?7h\e[?25h\e[?1049l'; IN_ALT=0
   "$@"
   local rc=$?
   read -r -p "$(_ 'Press Enter to continue...')" _unused
-  printf '\e[?1049h\e[?25l'; IN_ALT=1
+  printf '\e[?1049h\e[?25l\e[?7l'; IN_ALT=1
   return $rc
 }
 
@@ -1060,10 +1291,17 @@ update_flow() { # U i formuläret
 
 form_loop() { # 0 = starta förhandsvisning, 1 = avsluta
   DRAW=draw_form
+  local lastdraw=0 now
   while :; do
-    draw_form
-    read_key
-    case $? in 1) return 1 ;; 2) continue ;; esac
+    draw_form; printf -v lastdraw '%(%s)T' -1
+    while :; do   # utan tangenttryck: rita om högst en gång i sekunden (uppdateringsrad, fokuserad skärm)
+      read_key
+      case $? in
+        1) return 1 ;;
+        2) printf -v now '%(%s)T' -1; ((now != lastdraw)) && continue 2 ;;
+        *) break ;;
+      esac
+    done
     local t=${RT[$ROW]} id=${RI[$ROW]}
     case $KEY in
       U | u) update_flow; ((UPDATED)) && { DONE_MSG=1; return 1; } ;;
@@ -1083,38 +1321,62 @@ form_loop() { # 0 = starta förhandsvisning, 1 = avsluta
         esac ;;
       q | $'\e') return 1 ;;
     esac
+    case $KEY in $'\e[A' | $'\eOA' | k | $'\e[B' | $'\eOB' | j) ;; *) save_config ;; esac
   done
 }
 
 # --- förhandsvisning / inspelning ---
 draw_run() {
-  local id now state i sel line
+  local id now state where i line det sel
+  local -a head=() body=() bopt=() foot=()
+  local selb=0
+  term_size
   printf -v now '%(%s)T' -1
-  printf '\e[H'
   if ((REC)); then
-    state=$(printf '\e[1;31m● %s %s\e[0m' "$(_ 'RECORDING')" "$(fmt_time $((now - REC_START)))")
+    local dot=$RED; ((now % 2)) && dot=$MUT    # blinkande punkt, ritas om varje sekund
+    state="$dot●$R $RED$BO${TRM['RECORDING']:-RECORDING}$R  $FG$BO$(fmt_time $((now - REC_START)))$R"
   else
-    state=$(printf '\e[1;33m○ %s\e[0m  %s' "$(_ 'PREVIEW - adjust the cameras')" "$(_ '(Enter = start recording)')")
+    state="$YEL$BO○ ${TRM['PREVIEW - adjust the cameras']:-PREVIEW - adjust the cameras}$R"
   fi
-  printf '\e[2K multicam  %s\n' "$state"
-  if [[ $CAPTURE == screen ]]; then printf '\e[2K %s: %s\n' "$(_ 'Full screen')" "$MON"; else printf '\e[2K %s\n' "$AREA_LABEL"; fi
+  header_line "$state"; head+=("$HDRL")
+  if [[ $CAPTURE == screen ]]; then where="${TRM['Full screen']:-Full screen}: $MON"; else where=$AREA_LABEL; fi
+  head+=("$SUB$where$R")
+  if ((!REC)); then head+=("" " $BTN  ⏎  ${TRM['Start recording']:-Start recording}  $R  $SUB${TRM['arrange the cameras first - nothing is recorded yet']:-arrange the cameras first - nothing is recorded yet}$R"); fi
+  body+=(""); bopt+=(1)
   for i in "${!CAMS[@]}"; do
     id=${CAMS[$i]}
     cam_active "$id" || continue
-    sel=" "; ((i == SEL)) && sel=">"
-    printf -v line '%s [%s] %-24s x=%d y=%d %s=%d %s ring=%s %s %dpx bg=%s' "$sel" "$id" "$(cam_label "$id"):" \
-      "$((MX + C[$id.rx]))" "$((MY + C[$id.ry]))" "$(_ 'size')" "${C[$id.size]}" \
-      "$([[ ${C[$id.shape]} == circle ]] && _ 'circle' || _ 'rectangle')" \
-      "$([[ ${C[$id.ring]} == on ]] && _ 'on' || _ 'off')" "${C[$id.color]}" "${C[$id.thick]}" "${C[$id.bg]}"
-    printf '\e[2K%s\n' "$line"
+    if ((i == SEL)); then
+      line=" $ACC$BO$id$R  $FG$BO${C[$id.name]:-${TRM['off']:-off}}$R"
+    else
+      line=" $SUB$id  $(cam_label "$id")$R"
+    fi
+    if [[ ${C[$id.shape]} == circle ]]; then det=${TRM['circle']:-circle}; else det=${TRM['rectangle']:-rectangle}; fi
+    if [[ ${C[$id.ring]} == on ]]; then swatch "${C[$id.color]}"; det+=" · ${TRM['ring']:-ring} $R$SW$SUB ${C[$id.thick]} px"
+    else det+=" · ${TRM['ring']:-ring} ${TRM['off']:-off}"; fi
+    det+=" · ${C[$id.size]} px · $((MX + C[$id.rx])),$((MY + C[$id.ry]))"
+    [[ ${C[$id.bg]} == on ]] && det+=" · ${TRM['remove background']:-remove background}"
+    if ((i == SEL)); then
+      hl_line "$line"; body+=("$HL"); hl_line "    $SUB$det$R"; body+=("$HL")
+    else
+      body+=("$line" "    $SUB$det$R")
+    fi
+    bopt+=(0 0)
   done
-  printf '\e[2K\n'
-  printf '\e[2K %s: %s   %s: %s\n' "$(_ 'Mode')" "$([[ $MODE == move ]] && _ '[MOVE]' || _ '[SIZE]')" "$(_ 'Selected camera')" "${CAMS[$SEL]}"
-  printf '\e[2K\n'
-  printf '\e[2K %s\n' "${PROMPT:-$MSG}"
-  printf '\e[2K\e[2m %s\e[0m\n' "$(_ 'Tab camera  ↑↓←→ move/size (Shift = big)  m mode  +/- PgUp/PgDn size  1-9 position  o new area')"
-  printf '\e[2K\e[2m %s\e[0m\n' "$(_ 's shape  r ring  c/C colour  p next colour  [ ] thickness  b background  q quit')"
-  printf '\e[J'
+  body+=(""); bopt+=(1)
+  local mv sz
+  if [[ $MODE == move ]]; then mv="$ACC$BO${TRM['[MOVE]']:-[MOVE]}$R"; sz="$SUB${TRM['size']:-size}$R"
+  else mv="$SUB${TRM['move']:-move}$R"; sz="$ACC$BO${TRM['[SIZE]']:-[SIZE]}$R"; fi
+  body+=(" $SUB${TRM['Mode']:-Mode}$R  $mv  $sz      $SUB${TRM['Selected camera']:-Selected camera}: $R$FG$BO${CAMS[$SEL]}$R"); bopt+=(0)
+  msg_line; hr; foot+=("$MSGL" "$HRL")
+  local ctx=() qlabel=${TRM['quit']:-quit}
+  ((REC)) && qlabel=${TRM['stop']:-stop}
+  [[ $CAPTURE != screen ]] && ((!REC)) && ctx=(o "${TRM['new area']:-new area}")
+  chips Tab "${TRM['camera']:-camera}" "←↑↓→" "${TRM['move/size']:-move/size}" "⇧" "${TRM['big steps']:-big steps}" m "${TRM['mode']:-mode}" "+ -" "${TRM['size']:-size}" "1-9" "${TRM['position']:-position}" "${ctx[@]}" \
+    s "${TRM['shape']:-shape}" r "${TRM['ring']:-ring}" "c C" "${TRM['colour']:-colour}" p "${TRM['next colour']:-next colour}" "[ ]" "${TRM['thickness']:-thickness}" b "${TRM['background']:-background}" \
+    q "${qlabel}"
+  foot+=("${CHIPL[@]}")
+  fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
 }
 
 confirm() { # confirm "text" -> 0 = ja
@@ -1152,6 +1414,7 @@ run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
     if ((k == 2)); then
       printf -v now '%(%s)T' -1
       ((now != lastdraw)) && { lastdraw=$now; draw_run; }
+      ((DIRTY)) && save_config
       continue
     fi
     id=${CAMS[$SEL]}
@@ -1164,9 +1427,10 @@ run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
       o)
         if [[ $CAPTURE == screen ]]; then MSG=$(_ 'o only applies to the area/window capture modes.')
         elif ((REC)); then MSG=$(_ 'The area cannot be changed while recording.')
-        elif pick_area; then
+        elif FORCE_PICK=1; pick_area; then
           apply_area
           for k in A B; do cam_active "$k" && { clamp_cam "$k"; apply_cam "$k"; }; done
+          save_config
         fi ;;
       q | $'\e')
         if ((REC)); then
@@ -1218,30 +1482,32 @@ run_loop() { # 0 = klar (resultat i RESULT_FILE), 1 = avsluta utan resultat
           else MSG=$(_ 'The background-removal add-on is not installed (select the Background removal row in the form).'); fi ;;
         *) changed=0 ;;
       esac
-      if ((changed)); then clamp_cam "$id"; apply_cam "$id"; fi
+      if ((changed)); then clamp_cam "$id"; apply_cam "$id"; DIRTY=1; fi
     fi
     draw_run
   done
 }
 
 result_screen() {
-  local f=$1 a
+  local f=$1 d
   DRAW=draw_run
-  printf '\e[H\e[J'
+  term_size
   if [[ -f $f ]]; then
-    printf ' %s\n\n   %s\n\n' "$(_ 'The recording is done:')" "$f"
+    d=${f/#"$HOME"/\~}
+    header_line; OUT=("$HDRL" "" "$GRN$BO✓$R  $FG$BO${TRM['The recording is done:']:-The recording is done:}$R" "   $ACC$d$R" "")
     if need omacut; then
-      printf ' %s ' "$(_ 'Open in omacut? [Y/n]')"
+      OUT+=("$FG${TRM['Open in omacut?']:-Open in omacut?}$R  $KEYC Y $R $SUB${TRM['yes']:-yes}$R   $KEYC n $R $SUB${TRM['no']:-no}$R")
+      flush_out
       read_key 60
       case $KEY in
         n | N) ;;
         *) setsid -f omacut "$f" >/dev/null 2>&1 </dev/null ;;
       esac
     else
-      printf ' %s\n' "$(_ '(omacut is not installed)')"; sleep 1
+      OUT+=("$SUB${TRM['(omacut is not installed)']:-(omacut is not installed)}$R"); flush_out; sleep 1
     fi
   else
-    printf ' %s\n' "$(_ 'The recording could not be completed (no file found).')"; sleep 2
+    header_line; OUT=("$HDRL" "" "$RED$BO✗$R  $FG${TRM['The recording could not be completed (no file found).']:-The recording could not be completed (no file found).}$R"); flush_out; sleep 2
   fi
 }
 
@@ -1272,7 +1538,7 @@ cleanup() {
     finish_recording
     REC=0
   fi
-  if ((IN_ALT)); then printf '\e[?25h\e[?1049l' 2>/dev/null; fi
+  if ((IN_ALT)); then printf '\e[?7h\e[?25h\e[?1049l' 2>/dev/null; fi
   [[ -n $STTY ]] && stty "$STTY" 2>/dev/null
   [[ $(cat "$RUNBASE/tui.pid" 2>/dev/null) == "$$" ]] && rm -f "$RUNBASE/tui.pid"
   # sessionskatalogen: bort om ingen inspelning/vakt längre behöver den
@@ -1313,12 +1579,13 @@ main() {
   TUI_ADDR=$(tui_address)
   STTY=$(stty -g 2>/dev/null)
   load_config
+  theme_init
   if [[ -z ${MULTICAM_NO_UPDATE_CHECK:-} && $UPDCHECK != off ]]; then
     ( update_available && echo 1 >"$RUN/update" ) >/dev/null 2>&1 &
   fi
   list_devices; list_mics; list_monitors
   resolve_saved
-  printf '\e[?1049h\e[?25l'; IN_ALT=1
+  printf '\e[?1049h\e[?25l\e[?7l'; IN_ALT=1   # ?7l: långa rader klipps i stället för att radbrytas
   while form_loop; do
     DRAW=draw_form
     if [[ $CAPTURE != screen ]] && ! pick_area; then continue; fi   # avbrutet val: tillbaka till formuläret
@@ -1328,7 +1595,7 @@ main() {
         ((${#RESULT_FILE})) && result_screen "$RESULT_FILE"
       fi
     else
-      printf '\e[H\e[J %s\n' "$MSG"; sleep 2
+      term_size; header_line; OUT=("$HDRL" "" "$RED$BO✗$R  $FG$MSG$R"); flush_out; sleep 2
     fi
     break
   done

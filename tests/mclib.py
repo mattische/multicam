@@ -223,7 +223,8 @@ PGUP, PGDN, F5, ESC, ENTER, TAB = '\x1b[5~', '\x1b[6~', '\x1b[15~', '\x1b', '\r'
 
 def _detect_cams():
     out = subprocess.run('omarchy-capture-webcam-list', capture_output=True, text=True).stdout
-    return [(d, re.sub(r'\s*\(usb.*$', '', n).strip()) for d, n in re.findall(r'^(/dev/video\d+)\s+(.*)$', out, re.M)]
+    # samma tolkning som appen (list_devices): namnet fram till första " (", utan avslutande kolon
+    return [(d, n.split(' (')[0].rstrip(':').strip()) for d, n in re.findall(r'^(/dev/video\d+)\s+(.*)$', out, re.M)]
 
 
 def _detect_mics():

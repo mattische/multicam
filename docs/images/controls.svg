@@ -23,10 +23,10 @@
     <line x1="160" y1="170" x2="212" y2="132" stroke="#e0af68" stroke-width="5" marker-end="url(#ah)"/>
     <circle cx="250" cy="110" r="62" fill="#ff3399"/>
     <use href="#cam" x="192" y="52" width="116" height="116"/>
-    <text x="20" y="282" font-size="22" fill="#e0af68" font-weight="bold">[FLYTTA]</text>
+    <text x="20" y="282" font-size="22" fill="#e0af68" font-weight="bold">[MOVE]</text>
   </g>
-  <text x="30" y="372" font-size="18" fill="#c0caf5">←↑↓→  flytta 20 px</text>
-  <text x="30" y="400" font-size="18" fill="#a9b1d6">Shift + pil  100 px</text>
+  <text x="30" y="372" font-size="18" fill="#c0caf5">←↑↓→  move 20 px</text>
+  <text x="30" y="400" font-size="18" fill="#a9b1d6">Shift + arrow  100 px</text>
 
   <!-- panel 2: size -->
   <g transform="translate(420,30)">
@@ -37,10 +37,10 @@
     <circle cx="180" cy="152" r="62" fill="none" stroke="#e0af68" stroke-width="3" stroke-dasharray="7 7"/>
     <line x1="232" y1="100" x2="258" y2="74" stroke="#e0af68" stroke-width="5" marker-end="url(#ah)"/>
     <line x1="128" y1="204" x2="102" y2="230" stroke="#e0af68" stroke-width="5" marker-end="url(#ah)"/>
-    <text x="20" y="282" font-size="22" fill="#e0af68" font-weight="bold">[STORLEK]</text>
+    <text x="20" y="282" font-size="22" fill="#e0af68" font-weight="bold">[SIZE]</text>
   </g>
-  <text x="420" y="372" font-size="18" fill="#c0caf5">↑→ större   ↓← mindre  (±10 %)</text>
-  <text x="420" y="400" font-size="18" fill="#a9b1d6">m byter läge · +/- alltid</text>
+  <text x="420" y="372" font-size="18" fill="#c0caf5">↑→ bigger   ↓← smaller  (±10 %)</text>
+  <text x="420" y="400" font-size="18" fill="#a9b1d6">m switches mode · +/- always</text>
 
   <!-- panel 3: numpad snap -->
   <g transform="translate(810,30)">
@@ -63,6 +63,6 @@
     <rect x="320" y="262" width="34" height="32" rx="7" fill="#e0af68"/>
     <text x="337" y="285" font-size="20" font-weight="bold" fill="#1a1b26" text-anchor="middle">3</text>
   </g>
-  <text x="810" y="372" font-size="18" fill="#c0caf5">1–9  snappa till hörn, kant, mitt</text>
-  <text x="810" y="400" font-size="18" fill="#a9b1d6">Tab  byt kamera (A / B)</text>
+  <text x="810" y="372" font-size="18" fill="#c0caf5">1–9  snap to corner, edge, centre</text>
+  <text x="810" y="400" font-size="18" fill="#a9b1d6">Tab  switch camera (A / B)</text>
 </svg>

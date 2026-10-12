@@ -1,17 +1,18 @@
 # Status and handoff (2026-10-12)
 
+_1.2.0: new TUI look that follows the active Omarchy theme (colours from `colors.toml`), the background-removal add-on is installed by default (`--no-bgremove` skips it), and all settings are saved as soon as they change, including camera positions for area/window recording and the last area (reusable from the form)._
+
 _Added after 1.0.0: English UI with system-language detection (Swedish kept), optional background-removal install from `install.sh` and from the form, `multicam update` / `check-update` with a startup update check (U in the form). Tests T-L1 (language) and T-U1 (update, local git origin) added._
 
 ## Where things stand
-- multicam 1.1.0 is complete per `docs/kravspec.md` (requirements A–F plus B6: full screen / area / window).
+- multicam 1.2.0 is complete per `docs/kravspec.md` (requirements A–F plus B6: full screen / area / window).
 - Test results: `docs/TEST-REPORT.md`. The automatic suite passes on the original machine (mbp-omarchy).
 - Installed there with the keybind `SUPER + ALT + M` (line ending in `-- multicam` in `~/.config/hypr/bindings.lua`).
 
 ## Continue on another machine
 ```
 git clone git@github.com:mattische/multicam.git && cd multicam
-./install.sh --keybind        # or ./install.sh for no keybind; --bgremove adds transparent camera background
-multicam install-bgremove     # optional background-removal add-on
+./install.sh --keybind        # or ./install.sh for no keybind; the background-removal add-on is included (--no-bgremove skips it)
 ```
 Requirements: Omarchy with Hyprland 0.56+ and Lua config. Only Lua dispatches are used (see BRIEF.md).
 

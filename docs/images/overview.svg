@@ -104,17 +104,25 @@
     <rect x="1070" y="56" width="500" height="372" rx="10" fill="#1a1b26" stroke="#7aa2f7" stroke-width="2"/>
   </g>
   <g font-size="15" fill="#c0caf5">
-    <text x="1092" y="92"><tspan font-weight="bold">multicam</tspan><tspan fill="#f7768e" font-weight="bold">   ● SPELAR IN 00:42</tspan></text>
-    <text x="1092" y="132"><tspan fill="#7aa2f7">&gt; [A]</tspan> HD Pro Webcam C920</text>
-    <text x="1092" y="154" fill="#a9b1d6">      cirkel · ring 4 px <tspan fill="#ff3399">■</tspan> #ff3399</text>
-    <text x="1092" y="186">  [B] FaceTime HD Camera</text>
-    <text x="1092" y="208" fill="#a9b1d6">      rektangel · ring 4 px <tspan fill="#00aaff">■</tspan> #00aaff</text>
-    <text x="1092" y="248">Läge: <tspan fill="#e0af68">[FLYTTA]</tspan>   Vald kamera: A</text>
-    <text x="1092" y="290" font-size="13" fill="#565f89">Tab kamera   ←↑↓→ flytta/storlek   m läge</text>
-    <text x="1092" y="312" font-size="13" fill="#565f89">+/- storlek   1-9 position   s form</text>
-    <text x="1092" y="334" font-size="13" fill="#565f89">r ring   c/C färg   p nästa färg   [ ] tjocklek</text>
-    <text x="1092" y="356" font-size="13" fill="#565f89">b bakgrund bort   q stoppa</text>
-    <rect x="1092" y="382" width="10" height="18" fill="#c0caf5"/>
+    <text x="1092" y="92"><tspan fill="#7aa2f7" font-weight="bold">multicam</tspan><tspan fill="#737aa2"> 1.2.0  </tspan><tspan fill="#f7768e">●</tspan><tspan fill="#f7768e" font-weight="bold"> RECORDING</tspan><tspan font-weight="bold"> 00:42</tspan></text>
+    <text x="1092" y="116" fill="#737aa2">Full screen: DP-1</text>
+    <rect x="1088" y="136" width="464" height="50" fill="#283457"/>
+    <rect x="1088" y="136" width="4" height="50" fill="#7aa2f7"/>
+    <text x="1100" y="156"><tspan fill="#7aa2f7" font-weight="bold">A</tspan>  <tspan font-weight="bold">HD Pro Webcam C920</tspan></text>
+    <text x="1112" y="178" fill="#737aa2">circle · ring <tspan fill="#ff3399">■</tspan> 4 px · 240 px</text>
+    <text x="1100" y="208" fill="#737aa2">B  FaceTime HD Camera</text>
+    <text x="1112" y="230" fill="#737aa2">rectangle · ring <tspan fill="#00aaff">■</tspan> 4 px · 216 px</text>
+    <text x="1100" y="266"><tspan fill="#737aa2">Mode</tspan>  <tspan fill="#7aa2f7" font-weight="bold">[MOVE]</tspan>  <tspan fill="#737aa2">size</tspan></text>
+    <rect x="1092" y="284" width="456" height="1.5" fill="#414868"/>
+    <g font-size="13">
+      <rect x="1092" y="298" width="32" height="20" fill="#24283b"/><text x="1097" y="313" fill="#7aa2f7" font-weight="bold">Tab</text><text x="1130" y="313" fill="#737aa2">camera</text>
+      <rect x="1190" y="298" width="40" height="20" fill="#24283b"/><text x="1194" y="313" fill="#7aa2f7" font-weight="bold">←↑↓→</text><text x="1236" y="313" fill="#737aa2">move/size</text>
+      <rect x="1322" y="298" width="16" height="20" fill="#24283b"/><text x="1326" y="313" fill="#7aa2f7" font-weight="bold">m</text><text x="1344" y="313" fill="#737aa2">mode</text>
+      <rect x="1092" y="326" width="32" height="20" fill="#24283b"/><text x="1097" y="341" fill="#7aa2f7" font-weight="bold">1-9</text><text x="1130" y="341" fill="#737aa2">position</text>
+      <rect x="1206" y="326" width="16" height="20" fill="#24283b"/><text x="1210" y="341" fill="#7aa2f7" font-weight="bold">s</text><text x="1228" y="341" fill="#737aa2">shape</text>
+      <rect x="1282" y="326" width="16" height="20" fill="#24283b"/><text x="1286" y="341" fill="#7aa2f7" font-weight="bold">r</text><text x="1304" y="341" fill="#737aa2">ring</text>
+      <rect x="1350" y="326" width="16" height="20" fill="#24283b"/><text x="1354" y="341" fill="#7aa2f7" font-weight="bold">q</text><text x="1372" y="341" fill="#737aa2">stop</text>
+    </g>
   </g>
 
   <!-- circle camera (A) -->

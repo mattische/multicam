@@ -102,7 +102,7 @@ def t_install():
     before = snapshot(home)
     env = dict(os.environ, HOME=home)
     usr_before = sh('find /usr/bin -type f -printf "%p %T@ %s\\n" | sort | md5sum').stdout
-    r = subprocess.run([REPO + '/install.sh', '--yes'], env=env, capture_output=True, text=True)
+    r = subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove'], env=env, capture_output=True, text=True)
     expect(r.returncode == 0, r.stdout + r.stderr)
     after = snapshot(home)
     new = {os.path.relpath(p, home) for p in set(after) - set(before)}
@@ -147,7 +147,7 @@ def t_keybind():
     orig = '-- user comment\no.bind("SUPER + I", "X", "y")\n-- sista raden utan newline'
     open(home + '/.config/hypr/bindings.lua', 'w').write(orig)
     env = dict(os.environ, HOME=home)
-    r = subprocess.run([REPO + '/install.sh', '--keybind'], env=env, capture_output=True, text=True)
+    r = subprocess.run([REPO + '/install.sh', '--keybind', '--no-bgremove'], env=env, capture_output=True, text=True)
     expect(r.returncode == 0, r.stderr)
     b = open(home + '/.config/hypr/bindings.lua').read()
     lines = b.split('\n')
@@ -181,7 +181,7 @@ def t_b2():
         seen = []
         # Rader: cam A, form, ring, kantfärg, tjocklek, cam B, bgsetup, mic, daudio, screen, start
         s.send(DOWN); s.send(RIGHT); seen.append(('form', 'cirkel' in s.screen() and '● cirkel' in s.screen()))
-        s.send(DOWN); s.send(ENTER); seen.append(('ring', '[x] på' in s.screen()))
+        s.send(DOWN); s.send(ENTER); seen.append(('ring', '● på' in s.screen().split('Ring')[1].split('\n')[0]))
         s.send(DOWN); s.send(RIGHT); seen.append(('färg', '#ff0000' in s.screen()))
         s.send('C'); s.send('00ff00'); s.send(ENTER); seen.append(('hex', '#00ff00' in s.screen()))
         s.send(DOWN); s.send(RIGHT); s.send(RIGHT); seen.append(('tjocklek', '6 px' in s.screen()))
@@ -189,7 +189,7 @@ def t_b2():
         # B visar nu delrader + raden 'Bakgrund bort' (tillägget är inte installerat i testets HOME); hoppa till mic
         for _ in range(6): s.send(DOWN)
         s.send(RIGHT); seen.append(('mic', 'ingen' not in s.screen().split('Mikrofon')[1].split('\n')[0]))
-        s.send(DOWN); s.send(ENTER); seen.append(('skrivbordsljud', '[x] på' in s.screen().split('Skrivbordsljud')[1].split('\n')[0]))
+        s.send(DOWN); s.send(ENTER); seen.append(('skrivbordsljud', '● på' in s.screen().split('Skrivbordsljud')[1].split('\n')[0]))
         s.send(DOWN); s.send(RIGHT); seen.append(('spela in', '● område' in s.screen()))
         s.send(DOWN); s.send(RIGHT); seen.append(('skärm', 'fokuserad' not in s.screen().split('Skärm')[1].split('\n')[0]))
         s.send(ESC); expect(s.wait_exit(5), 'avslutade inte')
@@ -217,7 +217,7 @@ def t_b4():
     try:
         s2.wait_for('Kamera A', 5)
         scr = s2.screen()
-        expect('● cirkel' in scr and '[x] på' in scr and '#123abc' in scr and '5 px' in scr, scr)
+        expect('● cirkel' in scr and '● på' in scr.split('Ring')[1].split('\n')[0] and '#123abc' in scr and '5 px' in scr, scr)
         R.add('T-B4', 'GODKÄND', 'ändrade form/ring/färg/tjocklek, q, ny start: formuläret förifyllt (cirkel, ring på, #123abc, 5 px); config: ' +
               ' '.join(l for l in c.splitlines() if l.startswith('CAM_A_') and any(k in l for k in ('SHAPE', 'RING', 'COLOR', 'THICK'))))
     finally:
@@ -843,6 +843,97 @@ def t_b6c():
         shutil.rmtree(o, ignore_errors=True)
 
 
+def conf_kv(home):
+    return dict(l.split('=', 1) for l in open(home + '/.config/multicam/config').read().splitlines() if '=' in l)
+
+
+@test('T-B7')
+def t_persist():
+    """Inställningar sparas direkt när de ändras (inte bara vid avslut) och används vid nästa start (hel skärm och område)."""
+    wake()
+    h = make_home('b7', cfg(shape='circle', ring='on', size=200) + 'CAM_A_RX=100\nCAM_A_RY=100\nCAM_B_DEV=\nCAM_B_NAME=\n')
+    o = out_dir('b7')
+    s = Session(h, o)
+    try:
+        s.wait_for('Kamera A', 5)
+        s.send(DOWN, 0.3); s.send(RIGHT, 0.3)            # form -> rektangel
+        kv = conf_kv(h)
+        expect(kv.get('CAM_A_SHAPE') == 'rect', f'formuläret: ändringen sparades inte direkt: {kv.get("CAM_A_SHAPE")}')
+        s.send(F5)
+        expect(s.wait_for('FÖRHANDSVISNING', 15), s.screen())
+        expect(wait_until(lambda: 'MulticamA' in geo(), 8), 'kamera saknas')
+        s.send(RIGHT, 0.3); s.send(RIGHT, 0.3); s.send(DOWN, 0.3); s.send('+', 0.3)
+        time.sleep(1.6)                                    # sparas när det varit tyst en stund
+        g1 = geo()['MulticamA']
+        kv = conf_kv(h)                                    # TUI:t kör fortfarande
+        expect(kv.get('CAM_A_SIZE') == str(g1[3]) and kv.get('CAM_A_RX') != '100', f'förhandsvisning: sparades inte direkt: {kv} geo={g1}')
+        s.send('q'); expect(s.wait_exit(8), 'avslutade inte')
+    finally:
+        s.close()
+    expect(not settle_clean(), settle_clean())
+    s = Session(h, o)
+    try:
+        s.wait_for('Kamera A', 5)
+        expect('● rektangel' in s.screen(), s.screen())
+        s.send(F5)
+        expect(s.wait_for('FÖRHANDSVISNING', 15), s.screen())
+        expect(wait_until(lambda: geo().get('MulticamA') == g1, 8), f'ny start: {geo().get("MulticamA")} väntade {g1}')
+        s.send('q'); expect(s.wait_exit(8), 'avslutade inte')
+    finally:
+        s.close()
+        shutil.rmtree(o, ignore_errors=True)
+    expect(not settle_clean(), settle_clean())
+    R.add('T-B7', 'GODKÄND', f'form (rektangel) och kamerans position/storlek {g1} fanns i config medan TUI:t körde; ny start: formuläret förifyllt och kameran på samma plats')
+
+
+@test('T-B6d')
+def t_b6d():
+    """Område: senaste området sparas och återanvänds vid F5 utan väljaren; raden Område kan välja nytt."""
+    wake()
+    mx, my, mw, mh, sc = focused_geo()
+    rect = f'{mx + 100},{my + 80} 900x600'
+    d = picker_stub(rect)
+    o = out_dir('b6d')
+    h = make_home('b6d', cfg(shape='circle', ring='on', size=200, extra='CAPTURE=region\n') + 'CAM_B_DEV=\nCAM_B_NAME=\n')
+    env = {'PATH': d + ':' + os.environ['PATH']}
+    calls = lambda: len(open(d + '/args').read().splitlines()) if os.path.exists(d + '/args') else 0
+    try:
+        s = Session(h, o, env=env)
+        start_to_preview(s)
+        expect(calls() == 1, f'väljaren anropades {calls()} gånger första gången')
+        s.send('q'); expect(s.wait_exit(8), 'avslutade inte')
+        s.close()
+        kv = conf_kv(h)
+        expect(kv.get('LAST_AREA') == f'{mx + 100},{my + 80},900,600', kv.get('LAST_AREA'))
+        s = Session(h, o, env=env)
+        s.wait_for('Kamera A', 5)
+        scr = s.screen()
+        expect('senaste: 900x600' in scr, scr)
+        start_to_preview(s)
+        hdr = [l for l in s.screen().splitlines() if 'Område 900x600' in l]
+        expect(calls() == 1 and hdr, f'andra gången: väljaren anropad {calls()} ggr, rubrik {hdr}')
+        g = geo()['MulticamA']
+        expect(g[0] >= mx + 100 and g[1] >= my + 80 and g[0] + g[2] <= mx + 1000 and g[1] + g[3] <= my + 680, f'kameran utanför området: {g}')
+        s.send('q'); expect(s.wait_exit(8), 'avslutade inte')
+        s.close()
+        # välj nytt via raden Område (Enter växlar) -> väljaren körs igen
+        s = Session(h, o, env=env)
+        s.wait_for('Kamera A', 5)
+        while 'senaste:' not in [l for l in s.screen().splitlines() if '▌' in l][0]:
+            s.send(DOWN, 0.15)
+        s.send(ENTER, 0.3)
+        expect('● välj nytt' in s.screen(), s.screen())
+        start_to_preview(s)
+        expect(calls() == 2, f'välj nytt: väljaren anropad {calls()} ggr')
+        s.send('q'); expect(s.wait_exit(8), 'avslutade inte')
+        s.close()
+    finally:
+        s.close()
+        shutil.rmtree(o, ignore_errors=True)
+    expect(not settle_clean(), settle_clean())
+    R.add('T-B6d', 'GODKÄND', f'senaste området {rect} sparades; ny start: raden "senaste: 900x600" och F5 utan väljare (rubrik Område 900x600, kameran inuti); "välj nytt" kör väljaren igen')
+
+
 @test('T-R1')
 def t_enter_only():
     """Regression: i förhandsvisningen startar bara Enter inspelningen (inte F5/andra tangenter); kameraregeln har no_anim."""
@@ -1003,7 +1094,7 @@ def t_a6():
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(home)
     env = dict(os.environ, HOME=home)
-    subprocess.run([REPO + '/install.sh', '--yes'], env=env, capture_output=True)
+    subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove'], env=env, capture_output=True)
     before = snapshot(home)
     t0 = time.time()
     r = subprocess.run([home + '/.local/bin/multicam', 'install-bgremove', '--yes'], env=env, capture_output=True, text=True)
@@ -1023,7 +1114,7 @@ def t_f():
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(home)
     env = dict(os.environ, HOME=home)
-    subprocess.run([REPO + '/install.sh', '--yes'], env=env, capture_output=True)
+    subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove'], env=env, capture_output=True)
     mc = home + '/.local/bin/multicam'
     # F3: korrupt modell via URL-override -> avvisas
     bad = SCRATCH + '/bad.onnx'
@@ -1122,7 +1213,7 @@ def t_update():
     env = dict(os.environ, HOME=home)
     mc = home + '/.local/bin/multicam'
     run = lambda *a: subprocess.run(a, env=env, capture_output=True, text=True)
-    r = run(base + '/clone/install.sh', '--yes'); expect(r.returncode == 0, r.stdout + r.stderr)
+    r = run(base + '/clone/install.sh', '--yes', '--no-bgremove'); expect(r.returncode == 0, r.stdout + r.stderr)
     expect(run(mc, 'check-update').returncode == 1, 'check-update: uppdatering trots att inget ändrats')
     u = run(mc, 'update', '--yes'); expect('uppdaterat' in u.stdout, 'update när allt är aktuellt: ' + u.stdout + u.stderr)
     c = base + '/clone'

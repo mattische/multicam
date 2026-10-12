@@ -1,6 +1,6 @@
 #!/bin/bash
 # multicam - install. No root, no packages installed.
-# Flags: --yes (no questions, no keybind, no add-on), --keybind / --no-keybind, --bgremove / --no-bgremove
+# Flags: --yes (no questions, no keybind), --keybind / --no-keybind, --no-bgremove (skip the background-removal add-on)
 SRC=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 DATA=$HOME/.local/share/multicam
 BIN=$HOME/.local/bin/multicam
@@ -10,7 +10,7 @@ KEYCOMBO="SUPER + ALT + M"
 # English, or Swedish if the system language is Swedish (MULTICAM_LANG=sv|en overrides)
 case ${MULTICAM_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}} in sv*) sv=1 ;; *) sv=0 ;; esac
 _() { if ((sv)); then printf '%s\n' "$2"; else printf '%s\n' "$1"; fi; }
-yes=0; kb=ask; bg=ask
+yes=0; kb=ask; bg=yes
 for a in "$@"; do
   case $a in
     --yes | -y) yes=1 ;;
@@ -64,12 +64,11 @@ if [[ $kb == yes ]]; then
   fi
 fi
 
-# optional add-on: transparent camera background (about 300 MB). Interactive: the add-on installer explains and asks.
+# background removal (transparent camera background, about 300 MB) is installed by default; --no-bgremove skips it.
+# A failure (e.g. offline) does not stop the installation: the add-on can be installed later.
 if [[ $bg == yes ]]; then
-  "$BIN" install-bgremove --yes
-elif [[ $bg == ask && $yes == 0 && -t 0 ]]; then
-  read -r -p "$(_ "Also set up transparent camera background (add-on, ~300 MB)? [y/N] " "Installera även transparent kamerabakgrund (tillägg, ca 300 MB)? [j/N] ")" a
-  [[ $a == [jJyY]* ]] && "$BIN" install-bgremove
+  _ "Installing the background-removal add-on (skip with --no-bgremove)..." "Installerar tillägget bakgrund bort (hoppa över med --no-bgremove)..."
+  "$BIN" install-bgremove --yes || _ "The add-on could not be installed now - try again later with 'multicam install-bgremove'." "Tillägget kunde inte installeras nu - försök igen senare med 'multicam install-bgremove'."
 fi
 
 _ "multicam installed: $BIN" "multicam installerat: $BIN"

@@ -5,11 +5,12 @@ the screen, up to two camera overlays and a chosen microphone into a plain MP4.
 Cameras are floating windows (rectangle or circle, optional coloured ring) that you move and
 resize with the keyboard. Recording is done by Omarchy's own `omarchy-capture-screenrecording`;
 multicam only replaces its `--with-webcam` part. The UI is in English, or Swedish when the system language
-is Swedish (see [Language](#language)).
+is Swedish (see [Language](#language)). It takes its colours from the active Omarchy theme, and remembers all
+settings between runs.
 
 ![multicam recording: code editor with a round and a rectangular camera overlay and the multicam TUI](docs/images/overview.svg)
 
-<sub>Illustrations, not screenshots (they show the Swedish UI text).</sub>
+<sub>Illustrations, not screenshots.</sub>
 
 ## Requirements
 
@@ -30,13 +31,14 @@ git clone git@github.com:mattische/multicam.git && cd multicam && ./install.sh
 Options:
 
 ```
-./install.sh                  # asks about the optional keybind and the optional background-removal add-on
-./install.sh --yes            # no questions, no keybind, no add-on
+./install.sh                  # asks about the optional keybind
+./install.sh --yes            # no questions, no keybind
 ./install.sh --keybind        # also add SUPER + ALT + M to ~/.config/hypr/bindings.lua
-./install.sh --bgremove       # also install the transparent-camera-background add-on (~300 MB)
+./install.sh --no-bgremove    # skip the background-removal add-on (~300 MB)
 ```
-(`--no-keybind` / `--no-bgremove` answer "no" without asking.) The add-on can also be installed later, see
-[Background-removal add-on](#background-removal-add-on). The installer remembers the git revision and the
+The background-removal add-on (transparent camera background) is installed by default; `--no-bgremove` skips it.
+If it cannot be installed (e.g. offline), the installation still completes and the add-on can be installed later, see
+[Background-removal add-on](#background-removal-add-on). `--no-keybind` answers "no" without asking. The installer remembers the git revision and the
 repository it came from, so the app can find updates (see [Updating](#updating)).
 
 Files created (and nothing else):
@@ -61,7 +63,7 @@ multicam check-update   # exit 0 if an update is available (for scripts)
 At startup the app checks in the background (`git ls-remote`, nothing else is sent) whether `origin/main` is newer than
 the installed revision. If so the form shows a green line and you can press `U` to update, or ignore it. `U` also
 checks on demand. The update clones the repository into a temporary folder and runs its `install.sh --yes`;
-your settings, the keybind and the add-on are kept. After updating, restart multicam.
+your settings, the keybind and the add-on are kept (an update never installs the add-on if you removed it). After updating, restart multicam.
 Turn the startup check off with `UPDATE_CHECK=off` in `~/.config/multicam/config` or `MULTICAM_NO_UPDATE_CHECK=1`.
 The update source is the `origin` URL of the clone you installed from (a private repo needs working git credentials).
 
@@ -86,6 +88,22 @@ The result is `~/Videos/screenrecording-YYYY-MM-DD-HH_MM_SS.mp4` (h264 + AAC). O
 (`-2`, `-3`, ... on name collision). Set `MULTICAM_OUTPUT_DIR` to write somewhere else.
 The selected microphone is set as default source only while recording and always restored afterwards.
 "Screen" defaults to the focused monitor.
+
+### Settings are remembered
+
+Everything you set is written to `~/.config/multicam/config` as soon as it changes (and again on exit), so the next
+start opens with the same cameras, shapes, ring colours and thickness, background removal, microphone, desktop audio,
+capture mode and screen. Camera positions and sizes are remembered separately for full screen and for area/window
+recording (the latter relative to the area). In area mode the last area is remembered too: the form then shows an
+`Area` row where you choose `last: WxH @ X,Y` (reused at `F5` without the picker, as long as it is on a connected screen)
+or `pick a new one`. `o` in the preview always opens the picker. Saved devices that are not connected are shown as
+missing and kept, never silently replaced.
+
+### Look
+
+The TUI follows the active Omarchy theme: accent, selection and text colours are read from
+`~/.local/state/omarchy/current/theme/colors.toml` when it starts (without it, the terminal palette is used, which
+Omarchy also themes). `NO_COLOR=1` turns colours off. The icon in the header needs a Nerd Font (Omarchy's default).
 
 ### What to record: full screen, area or window
 
@@ -121,8 +139,9 @@ Form screen
 | ← → on the colour row | cycle the 8 preset colours |
 | `F5` | preview cameras |
 | `U` | check for / install an update |
+| ←/→ or Enter on `Area` | reuse the last area / pick a new one (area mode) |
 | Enter on `Remove background` | install the background-removal add-on (when not installed) |
-| `q`, `Esc` | quit (settings are saved) |
+| `q`, `Esc` | quit |
 
 Preview / recording screen
 
@@ -163,7 +182,7 @@ multicam only touches windows with class `MulticamA` / `MulticamB` and processes
 ## Background-removal add-on
 
 ```
-./install.sh --bgremove        # at install time (or answer "y" when the installer asks) ...
+./install.sh                   # installed by default (skip with --no-bgremove) ...
 multicam install-bgremove      # ... or any time later (also: select the "Remove background" row in the form and press Enter)
                                # ~300 MB Python venv + 14 MB model, all in ~/.local/share/multicam/bg/
 multicam uninstall-bgremove    # removes that one folder
