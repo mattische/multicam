@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Multicam
-Comment=Spela in skärm, kameror och mikrofon
+Comment=Record screen, cameras and microphone
 Exec=omarchy-launch-tui --app-id=TUI.float @BIN@
 Icon=camera-video
 Terminal=false
