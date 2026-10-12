@@ -19,6 +19,6 @@ pkgbase = multicam
 	optdepends = git: notice new releases on GitHub (update check)
 	optdepends = omacut: open the finished recording (from the Omarchy repository)
 	source = multicam-1.4.0.tar.gz::https://github.com/mattische/multicam/archive/refs/tags/v1.4.0.tar.gz
-	sha256sums = SKIP
+	sha256sums = 64b76f9c039822b9b507a9764371bea9e7b20c8869258b7dc8c205407a1516e5
 
 pkgname = multicam

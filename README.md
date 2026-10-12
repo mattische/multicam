@@ -42,7 +42,7 @@ and the icon. A package cannot write to your home folder, so the per-user parts 
 
 ### Per user with install.sh (no root)
 
-One line (works once the repository is public; until then use the git clone below):
+One line:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/mattische/multicam/main/install.sh | bash
@@ -51,10 +51,10 @@ curl -fsSL https://raw.githubusercontent.com/mattische/multicam/main/install.sh 
 Flags go after `bash -s --`, e.g. `curl -fsSL … | bash -s -- --yes --keybind`. The script clones the repository into a
 temporary folder, installs from there and removes the folder again; questions are asked on the terminal as usual.
 
-From a clone (the repository is private for now; you need `gh`/ssh access to `mattische/multicam`):
+From a clone:
 
 ```
-git clone git@github.com:mattische/multicam.git && cd multicam && ./install.sh
+git clone https://github.com/mattische/multicam.git && cd multicam && ./install.sh
 ```
 
 Options (same for both ways):
@@ -130,7 +130,7 @@ checks on demand. The update clones the repository into a temporary folder and r
 your settings, the keybind, the bar plugin and the add-on are kept (an update never re-adds what you removed). After updating, restart multicam.
 Turn the startup check off (both ways of installing) with `UPDATE_CHECK=off` in `~/.config/multicam/config` (or the
 settings view) or `MULTICAM_NO_UPDATE_CHECK=1`.
-The update source is the `origin` URL of the clone you installed from (a private repo needs working git credentials).
+The update source is the `origin` URL of the clone you installed from.
 
 ## Usage
 
