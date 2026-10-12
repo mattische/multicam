@@ -36,10 +36,10 @@ def record():
         start_to_preview(s); wait_until(lambda: len(geo()) == 2, 8)
         mon = [m for m in monitors() if m['focused']][0]
         L = int(mon['width'] / mon['scale'])
-        s.send(ENTER, 0.3); s.wait_for('SPELAR IN', 15); time.sleep(3)
+        s.send(ENTER, 0.3); s.wait_for('RECORDING', 15); time.sleep(3)
         grim('/tmp/claude-1000/bar.png', geometry=f"{mon['x']},{mon['y']} {L}x34")
         sh('omarchy-capture-screenrecording --stop-recording')
-        s.wait_for('klar', 25); time.sleep(1)
+        s.wait_for('recording is done', 25); time.sleep(1)
         grim('/tmp/claude-1000/bar2.png', geometry=f"{mon['x']},{mon['y']} {L}x34")
         fp = os.path.join(o, [x for x in os.listdir(o) if x.endswith('.mp4')][0])
         for t, n in [('0.2', 'c1-frame-0.2s'), ('4', 'x1-frame-4s')]:

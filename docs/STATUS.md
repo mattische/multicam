@@ -1,11 +1,13 @@
 # Status and handoff (2026-10-12)
 
+_1.3.0: English only (Swedish removed); multicam hides itself (special:multicam) while recording and comes back when it stops; a Quickshell bar plugin (`shell-plugin/`, installed as `multicam.recording`) shows a blinking red icon + time while recording, click stops; `multicam stop` (also the keybind pressed again while recording); settings view (`S`): output folder, after recording, hide, bar indicator, arrow steps, update check. Tests T-S1, T-H1 added, T-L1 now checks English only._
+
 _1.2.0: new TUI look that follows the active Omarchy theme (colours from `colors.toml`), the background-removal add-on is installed by default (`--no-bgremove` skips it), and all settings are saved as soon as they change, including camera positions for area/window recording and the last area (reusable from the form)._
 
 _Added after 1.0.0: English UI with system-language detection (Swedish kept), optional background-removal install from `install.sh` and from the form, `multicam update` / `check-update` with a startup update check (U in the form). Tests T-L1 (language) and T-U1 (update, local git origin) added._
 
 ## Where things stand
-- multicam 1.2.0 is complete per `docs/kravspec.md` (requirements A–F plus B6: full screen / area / window).
+- multicam 1.3.0 is complete per `docs/kravspec.md` (requirements A–F plus B6: full screen / area / window).
 - Test results: `docs/TEST-REPORT.md`. The automatic suite passes on the original machine (mbp-omarchy).
 - Installed there with the keybind `SUPER + ALT + M` (line ending in `-- multicam` in `~/.config/hypr/bindings.lua`).
 

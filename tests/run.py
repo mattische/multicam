@@ -85,6 +85,7 @@ def realistic_home(name):
     if os.path.exists(bl):
         txt = open(bl).read().splitlines(True)
         open(bl, 'w').write(''.join(l for l in txt if not l.rstrip().endswith('-- multicam')))
+    shutil.rmtree(home + '/.config/omarchy/plugins/multicam.recording', ignore_errors=True)   # användarens egen bar-ikon likaså
     return home
 
 
@@ -102,7 +103,7 @@ def t_install():
     before = snapshot(home)
     env = dict(os.environ, HOME=home)
     usr_before = sh('find /usr/bin -type f -printf "%p %T@ %s\\n" | sort | md5sum').stdout
-    r = subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove'], env=env, capture_output=True, text=True)
+    r = subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove', '--no-bar-indicator'], env=env, capture_output=True, text=True)
     expect(r.returncode == 0, r.stdout + r.stderr)
     after = snapshot(home)
     new = {os.path.relpath(p, home) for p in set(after) - set(before)}
@@ -147,7 +148,7 @@ def t_keybind():
     orig = '-- user comment\no.bind("SUPER + I", "X", "y")\n-- sista raden utan newline'
     open(home + '/.config/hypr/bindings.lua', 'w').write(orig)
     env = dict(os.environ, HOME=home)
-    r = subprocess.run([REPO + '/install.sh', '--keybind', '--no-bgremove'], env=env, capture_output=True, text=True)
+    r = subprocess.run([REPO + '/install.sh', '--keybind', '--no-bgremove', '--no-bar-indicator'], env=env, capture_output=True, text=True)
     expect(r.returncode == 0, r.stderr)
     b = open(home + '/.config/hypr/bindings.lua').read()
     lines = b.split('\n')
@@ -176,22 +177,22 @@ def t_keybind():
 def t_b2():
     s = run_session('b2', cfg(shape='rect', ring='off') + 'CAM_B_DEV=\n')
     try:
-        expect(s.wait_for('Kamera A', 5), 'form')
+        expect(s.wait_for('Camera A', 5), 'form')
         scr0 = s.screen()
         seen = []
         # Rader: cam A, form, ring, kantfärg, tjocklek, cam B, bgsetup, mic, daudio, screen, start
-        s.send(DOWN); s.send(RIGHT); seen.append(('form', 'cirkel' in s.screen() and '● cirkel' in s.screen()))
-        s.send(DOWN); s.send(ENTER); seen.append(('ring', '● på' in s.screen().split('Ring')[1].split('\n')[0]))
+        s.send(DOWN); s.send(RIGHT); seen.append(('form', 'circle' in s.screen() and '● circle' in s.screen()))
+        s.send(DOWN); s.send(ENTER); seen.append(('ring', '● on' in s.screen().split('Ring')[1].split('\n')[0]))
         s.send(DOWN); s.send(RIGHT); seen.append(('färg', '#ff0000' in s.screen()))
         s.send('C'); s.send('00ff00'); s.send(ENTER); seen.append(('hex', '#00ff00' in s.screen()))
         s.send(DOWN); s.send(RIGHT); s.send(RIGHT); seen.append(('tjocklek', '6 px' in s.screen()))
-        s.send(DOWN); s.send(RIGHT); seen.append(('kamera B', 'Kamera B' in s.screen() and (CAM_B_NAME.split()[0] in s.screen())))
+        s.send(DOWN); s.send(RIGHT); seen.append(('kamera B', 'Camera B' in s.screen() and (CAM_B_NAME.split()[0] in s.screen())))
         # B visar nu delrader + raden 'Bakgrund bort' (tillägget är inte installerat i testets HOME); hoppa till mic
         for _ in range(6): s.send(DOWN)
-        s.send(RIGHT); seen.append(('mic', 'ingen' not in s.screen().split('Mikrofon')[1].split('\n')[0]))
-        s.send(DOWN); s.send(ENTER); seen.append(('skrivbordsljud', '● på' in s.screen().split('Skrivbordsljud')[1].split('\n')[0]))
-        s.send(DOWN); s.send(RIGHT); seen.append(('spela in', '● område' in s.screen()))
-        s.send(DOWN); s.send(RIGHT); seen.append(('skärm', 'fokuserad' not in s.screen().split('Skärm')[1].split('\n')[0]))
+        s.send(RIGHT); seen.append(('mic', 'none' not in s.screen().split('Microphone')[1].split('\n')[0]))
+        s.send(DOWN); s.send(ENTER); seen.append(('skrivbordsljud', '● on' in s.screen().split('Desktop audio')[1].split('\n')[0]))
+        s.send(DOWN); s.send(RIGHT); seen.append(('spela in', '● area' in s.screen()))
+        s.send(DOWN); s.send(RIGHT); seen.append(('skärm', 'focused' not in s.screen().split('Screen')[1].split('\n')[0]))
         s.send(ESC); expect(s.wait_exit(5), 'avslutade inte')
         bad = [n for n, ok in seen if not ok]
         expect(not bad, f'ej ändringsbara: {bad}\n{s.screen()}')
@@ -205,7 +206,7 @@ def t_b4():
     h = make_home('b4', cfg(shape='rect', ring='off'))
     o = out_dir('b4')
     s = Session(h, o)
-    s.wait_for('Kamera A', 5)
+    s.wait_for('Camera A', 5)
     s.send(DOWN); s.send(RIGHT)      # cirkel
     s.send(DOWN); s.send(ENTER)      # ring på
     s.send(DOWN); s.send('C'); s.send('123abc'); s.send(ENTER)
@@ -215,9 +216,9 @@ def t_b4():
     c = open(h + '/.config/multicam/config').read()
     s2 = Session(h, o)
     try:
-        s2.wait_for('Kamera A', 5)
+        s2.wait_for('Camera A', 5)
         scr = s2.screen()
-        expect('● cirkel' in scr and '● på' in scr.split('Ring')[1].split('\n')[0] and '#123abc' in scr and '5 px' in scr, scr)
+        expect('● circle' in scr and '● on' in scr.split('Ring')[1].split('\n')[0] and '#123abc' in scr and '5 px' in scr, scr)
         R.add('T-B4', 'GODKÄND', 'ändrade form/ring/färg/tjocklek, q, ny start: formuläret förifyllt (cirkel, ring på, #123abc, 5 px); config: ' +
               ' '.join(l for l in c.splitlines() if l.startswith('CAM_A_') and any(k in l for k in ('SHAPE', 'RING', 'COLOR', 'THICK'))))
     finally:
@@ -230,10 +231,10 @@ def t_b5():
     h = make_home('b5', conf)
     s = Session(h, out_dir('b5'))
     try:
-        s.wait_for('Kamera A', 5)
+        s.wait_for('Camera A', 5)
         scr = s.screen()
-        expect('saknas: Obefintlig Kamera 9000' in scr, scr)
-        line = [l for l in scr.splitlines() if 'Kamera A' in l][0]
+        expect('missing: Obefintlig Kamera 9000' in scr, scr)
+        line = [l for l in scr.splitlines() if 'Camera A' in l][0]
         expect(CAM_A_NAME not in line and (not CAM_B_NAME or CAM_B_NAME not in line), line)
         s.send('q'); s.wait_exit(5)
         c = open(h + '/.config/multicam/config').read()
@@ -280,7 +281,7 @@ def t_d34():
                 errs.append(f'{label}: fick {g()} väntade {exp}')
         x, y, sz = MX + 500, MY + 300, 240
         chk('start', (x, y, sz, sz))
-        expect('[FLYTTA]' in s.screen(), 'läge')
+        expect('[MOVE]' in s.screen(), 'läge')
 
         def tr(a, b):  # heltalsdivision mot noll (som bash)
             return int(a / b)
@@ -303,7 +304,7 @@ def t_d34():
             step(key, lab, dx, dy)
         for key, lab, pct in [('+', '+', 10), ('-', '-', -10), (PGUP, 'PgUp', 10), (PGDN, 'PgDn', -10)]:
             step(key, lab, pct=pct)
-        s.send('m', 0.3); expect('[STORLEK]' in s.screen(), 'storleksläge ej i statusraden')
+        s.send('m', 0.3); expect('[SIZE]' in s.screen(), 'storleksläge ej i statusraden')
         for key, pct in [(UP, 10), (RIGHT, 10), (DOWN, -10), (LEFT, -10), (SUP, 25), (SDOWN, -25)]:
             step(key, 'storlek ' + repr(key), pct=pct)
         # minimum
@@ -318,7 +319,7 @@ def t_d34():
         for _ in range(25): s.send('-', 0.1)
         for _ in range(3): s.send('+', 0.1)
         s.send('m', 0.3)
-        if '[FLYTTA]' not in s.screen(): s.send('m', 0.3)
+        if '[MOVE]' not in s.screen(): s.send('m', 0.3)
         cl = {}
         for name, key in [('vänster', SLEFT), ('upp', SUP), ('höger', SRIGHT), ('ner', SDOWN)]:
             for _ in range(max(MW, MH) // 100 + 2): s.send(key, 0.06)
@@ -359,28 +360,28 @@ def t_d34():
         wait_until(lambda: len(geo()) == 2, 8)
         MX, MY, MW, MH = mon_area_of(geo()['MulticamA'])
         ga = lambda: geo()['MulticamA']; gb = lambda: geo()['MulticamB']
-        expect('Vald kamera: A' in s.screen(), s.screen())
+        expect('Selected camera: A' in s.screen(), s.screen())
         # 1 på A -> nedre vänstra
         s.send('1', 0.5)
         a0, b0 = ga(), gb()
         exA = (MX + 20, MY + MH - 20 - a0[3])
         if abs(a0[0] - exA[0]) > 1 or abs(a0[1] - exA[1]) > 1: errs.append(f'A/1: {a0} väntade {exA}')
         s.send(TAB, 0.4)
-        if 'Vald kamera: B' not in s.screen(): errs.append('Tab valde inte B')
+        if 'Selected camera: B' not in s.screen(): errs.append('Tab valde inte B')
         s.send('9', 0.5)
         a1, b1 = ga(), gb()
         if a1 != a0: errs.append(f'A flyttades när B styrdes: {a0} -> {a1}')
         exB = (MX + MW - 20 - b1[2], MY + 20)
         if abs(b1[0] - exB[0]) > 1 or abs(b1[1] - exB[1]) > 1: errs.append(f'B/9: {b1} väntade {exB}')
         s.send('\x1b[Z', 0.4)   # Shift-Tab tillbaka till A
-        if 'Vald kamera: A' not in s.screen(): errs.append('Shift-Tab valde inte A')
+        if 'Selected camera: A' not in s.screen(): errs.append('Shift-Tab valde inte A')
         s.send('5', 0.5)
         a2, b2 = ga(), gb()
         exA = (MX + (MW - a2[2]) // 2, MY + (MH - a2[3]) // 2)
         if abs(a2[0] - exA[0]) > 2 or abs(a2[1] - exA[1]) > 2: errs.append(f'A/5: {a2} väntade {exA}')
         if b2 != b1: errs.append(f'B flyttades av A:s åtgärd: {b1} -> {b2}')
         s.send(TAB, 0.3); s.send(TAB, 0.3)
-        if 'Vald kamera: A' not in s.screen(): errs.append('Tab två gånger ska ge A')
+        if 'Selected camera: A' not in s.screen(): errs.append('Tab två gånger ska ge A')
         R.add('T-D5', 'GODKÄND' if not errs else 'UNDERKÄND',
               'två kameror konfigurerade: Tab/Shift-Tab växlar vald kamera (statusrad), siffror 1/5 på A och 9 på B hamnar rätt (±1-2 px), den andra kameran rörs inte' + ('' if not errs else ' FEL ' + '; '.join(errs)))
         s.send('q'); s.wait_exit(5)
@@ -476,7 +477,7 @@ def t_d8():
 def start_recording(s, tmo=20):
     start_to_preview(s)
     s.send(ENTER, 0.3)
-    expect(s.wait_for('SPELAR IN', tmo), 'inspelning startade inte:\n' + s.screen())
+    expect(s.wait_for('RECORDING', tmo), 'inspelning startade inte:\n' + s.screen())
     expect(wait_until(gsr_pids, 5), 'gsr saknas')
 
 
@@ -498,7 +499,7 @@ def t_record_main():
         s.send('j', 0)
         wait_until(lambda: not gsr_pids(), 10, 0.02)
         t_stop = time.time()   # när gpu-screen-recorder avslutades
-        expect(s.wait_for('klar', 25), s.screen())
+        expect(s.wait_for('recording is done', 25), s.screen())
         after = default_source()
         files = sorted(os.listdir(o))
         mp4 = [f for f in files if f.endswith('.mp4')]
@@ -541,7 +542,7 @@ def t_collision():
         open(os.path.join(o, want), 'w').write('befintlig')
         time.sleep(3)
         s.send('q', 0.3); s.send('j', 0.3)
-        expect(s.wait_for('klar', 25), s.screen())
+        expect(s.wait_for('recording is done', 25), s.screen())
         files = sorted(os.listdir(o))
         s.send('n'); s.wait_exit(5)
         omarchy_name = f'screenrecording-{m[1]}_{m[2]}-{m[3]}-{m[4]}.mp4'
@@ -590,7 +591,7 @@ def t_e_signals():
         p = subprocess.Popen(['omarchy-capture-screenrecording', '--stop-recording'], stdout=subprocess.DEVNULL)
         gone = wait_until(lambda: not mc_clients() and not own_mpv_for_multicam(), 4, 0.02)
         dt = time.time() - t0
-        ended = s.wait_for('klar', 20)
+        ended = s.wait_for('recording is done', 20)
         p.wait(10)
         files = os.listdir(o)
         res['E2 --stop-recording utifrån'] = (bool(gone) and dt < 1.0 and ended, f'{dt:.2f}s', settle_clean(), files)
@@ -620,7 +621,7 @@ def t_c3_volume():
             during = default_source()
             time.sleep(5)
             s.send('q', 0.3); s.send('j', 0.3)
-            expect(s.wait_for('klar', 25), s.screen())
+            expect(s.wait_for('recording is done', 25), s.screen())
             f = [x for x in os.listdir(o) if x.endswith('.mp4')][0]
             r = sh(f'ffmpeg -hide_banner -nostats -i "{o}/{f}" -af volumedetect -vn -f null - 2>&1 | grep -E "mean_volume|max_volume"')
             mv = re.search(r'mean_volume: (-?[0-9.]+)', r.stdout)
@@ -683,13 +684,13 @@ def t_identical_cams():
     h = make_home('b5b', conf)
     s = Session(h, out_dir('b5b'), env=env)
     try:
-        s.wait_for('Kamera A', 5)
+        s.wait_for('Camera A', 5)
         scr = s.screen()
         s.send('q'); s.wait_exit(5)
         c = open(h + '/.config/multicam/config').read()
-        ok = 'CAM_A_DEV=/dev/video6' in c and 'CAM_B_DEV=/dev/video4' in c and 'saknas' not in scr
+        ok = 'CAM_A_DEV=/dev/video6' in c and 'CAM_B_DEV=/dev/video4' in c and 'missing' not in scr
         # ändra inte: Kamera B-raden ska visa Twin Cam (inte "av"/saknas)
-        lines = [l for l in scr.splitlines() if l.strip().startswith('Kamera')]
+        lines = [l for l in scr.splitlines() if l.strip().startswith('Camera')]
         R.add('T-B5b', 'GODKÄND' if ok and all('Twin Cam' in l for l in lines) else 'UNDERKÄND',
               f'A=/dev/video6, B=/dev/video4 (båda "Twin Cam") bevarade exakt: {lines}; config: ' + ' '.join(l for l in c.splitlines() if '_DEV=' in l))
     finally:
@@ -715,7 +716,7 @@ def t_screen_focus():
         foc_after = [m for m in monitors() if m['focused']][0]['name']
         act1 = active_addr()
         s.send('q', 0.3); s.send('j', 0.3)
-        expect(s.wait_for('klar', 25), s.screen())
+        expect(s.wait_for('recording is done', 25), s.screen())
         f = [x for x in os.listdir(o) if x.endswith('.mp4')][0]
         j = json.loads(sh(f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json "{o}/{f}"').stdout)['streams'][0]
         exp = (other['width'], other['height'])  # råa lägesstorleken; roterad skärm (transform 1) ger omvänd ordning i filen
@@ -762,7 +763,7 @@ def region_test(tid, capture, rect, label_expect=None):
         g = geo()
         inside = all(x >= rx and y >= ry and x + w <= rx + rw and y + h <= ry + rh for x, y, w, h in g.values())
         expect(inside, f'kameror utanför området {rect}: {g}')
-        hdr = [l for l in scr.splitlines() if 'Område' in l or 'Fönster' in l]
+        hdr = [l for l in scr.splitlines() if 'Area' in l or 'Window' in l]
         expect(hdr and (label_expect is None or label_expect in hdr[0]), f'rubrik: {hdr}\n{scr}')
         # numpad-snap och maxstorlek ska klampas mot området
         s.send('9', 0.4)
@@ -773,7 +774,7 @@ def region_test(tid, capture, rect, label_expect=None):
         expect(inside2, f'kameror utanför efter snap/förstoring: {g}')
         s.send('1', 0.3); s.send('+', 0.2)
         s.send(ENTER, 0.3)
-        expect(s.wait_for('SPELAR IN', 25), s.screen())
+        expect(s.wait_for('RECORDING', 25), s.screen())
         shim_during = os.path.exists(f'{s.home}/../../run/user/1000/multicam')  # (ej relevant)
         time.sleep(4)
         run = '/run/user/1000/multicam'
@@ -782,7 +783,7 @@ def region_test(tid, capture, rect, label_expect=None):
         frame_g = geo()
         grim('/tmp/claude-1000/b6-live.png')
         s.send('q', 0.3); s.send('j', 0.3)
-        expect(s.wait_for('klar', 25), s.screen())
+        expect(s.wait_for('recording is done', 25), s.screen())
         f = [x for x in os.listdir(o) if x.endswith('.mp4')]
         expect(len(f) == 1, os.listdir(o))
         fp = os.path.join(o, f[0])
@@ -802,7 +803,7 @@ def region_test(tid, capture, rect, label_expect=None):
 def t_b6a():
     fx, fy, fw, fh, sc = focused_geo()
     rect = f'{fx + 300},{fy + 200} 1200x800'
-    r = region_test('T-B6a', 'region', rect, 'Område 1200x800')
+    r = region_test('T-B6a', 'region', rect, 'Area 1200x800')
     R.add('T-B6a', 'GODKÄND' if not r['probs'] and not r['shim_left'] and r['args'] and r['args'][0].startswith('region') else 'UNDERKÄND',
           f'stub-väljare (anrop: {r["args"]}) gav {rect}; kameror inuti området före och efter snap/förstoring; MP4 {r["w"]}x{r["h"]} (område 1200x800 x skala {sc} = {int(1200*sc)}x{int(800*sc)}); '
           f'shim kvar efter start: {r["shim_left"]}; städat: {r["probs"] or "ja"}; bildruta (ej incheckad): {r["frame"]}')
@@ -817,7 +818,7 @@ def t_b6b():
     expect(cands, 'inget fönster på fokuserad skärm')
     c = cands[0]
     rect = f'{c["at"][0]},{c["at"][1]} {c["size"][0]}x{c["size"][1]}'
-    r = region_test('T-B6b', 'window', rect, 'Fönster: ' + c['class'])
+    r = region_test('T-B6b', 'window', rect, 'Window: ' + c['class'])
     R.add('T-B6b', 'GODKÄND' if not r['probs'] and r['args'] and r['args'][0].startswith('windows') else 'UNDERKÄND',
           f'fönster {c["class"]} {rect}; väljare anropad med "{r["args"]}"; rubrik "Fönster: {c["class"]}"; MP4 {r["w"]}x{r["h"]} (förväntat {int(c["size"][0]*sc)}x{int(c["size"][1]*sc)} vid skala {sc}); städat: {r["probs"] or "ja"}')
 
@@ -829,11 +830,11 @@ def t_b6c():
     o = out_dir('b6c')
     s = Session(make_home('b6c', cfg(extra='CAPTURE=region\n')), o, env={'PATH': d + ':' + os.environ['PATH']})
     try:
-        s.wait_for('Kamera A', 5)
+        s.wait_for('Camera A', 5)
         s.send(F5, 0.5)
-        got = s.wait_for('Valet avbröts', 5)
+        got = s.wait_for('Selection cancelled', 5)
         scr = s.screen()
-        ok = got and 'Kamera A' in scr and not mc_clients() and not gsr_pids() and not [x for x in os.listdir(o)]
+        ok = got and 'Camera A' in scr and not mc_clients() and not gsr_pids() and not [x for x in os.listdir(o)]
         # formuläret ska fortfarande styras: växla tillbaka till hel skärm och förhandsvisa
         s.send(UP, 0.2)
         R.add('T-B6c', 'GODKÄND' if ok else 'UNDERKÄND', f'väljaren avbröt (exit 1): meddelande "Valet avbröts", formuläret kvar, inga kamerafönster/inspelare, utmapp tom={os.listdir(o) == []}')
@@ -855,12 +856,12 @@ def t_persist():
     o = out_dir('b7')
     s = Session(h, o)
     try:
-        s.wait_for('Kamera A', 5)
+        s.wait_for('Camera A', 5)
         s.send(DOWN, 0.3); s.send(RIGHT, 0.3)            # form -> rektangel
         kv = conf_kv(h)
         expect(kv.get('CAM_A_SHAPE') == 'rect', f'formuläret: ändringen sparades inte direkt: {kv.get("CAM_A_SHAPE")}')
         s.send(F5)
-        expect(s.wait_for('FÖRHANDSVISNING', 15), s.screen())
+        expect(s.wait_for('PREVIEW', 15), s.screen())
         expect(wait_until(lambda: 'MulticamA' in geo(), 8), 'kamera saknas')
         s.send(RIGHT, 0.3); s.send(RIGHT, 0.3); s.send(DOWN, 0.3); s.send('+', 0.3)
         time.sleep(1.6)                                    # sparas när det varit tyst en stund
@@ -873,10 +874,10 @@ def t_persist():
     expect(not settle_clean(), settle_clean())
     s = Session(h, o)
     try:
-        s.wait_for('Kamera A', 5)
-        expect('● rektangel' in s.screen(), s.screen())
+        s.wait_for('Camera A', 5)
+        expect('● rectangle' in s.screen(), s.screen())
         s.send(F5)
-        expect(s.wait_for('FÖRHANDSVISNING', 15), s.screen())
+        expect(s.wait_for('PREVIEW', 15), s.screen())
         expect(wait_until(lambda: geo().get('MulticamA') == g1, 8), f'ny start: {geo().get("MulticamA")} väntade {g1}')
         s.send('q'); expect(s.wait_exit(8), 'avslutade inte')
     finally:
@@ -906,11 +907,11 @@ def t_b6d():
         kv = conf_kv(h)
         expect(kv.get('LAST_AREA') == f'{mx + 100},{my + 80},900,600', kv.get('LAST_AREA'))
         s = Session(h, o, env=env)
-        s.wait_for('Kamera A', 5)
+        s.wait_for('Camera A', 5)
         scr = s.screen()
-        expect('senaste: 900x600' in scr, scr)
+        expect('last: 900x600' in scr, scr)
         start_to_preview(s)
-        hdr = [l for l in s.screen().splitlines() if 'Område 900x600' in l]
+        hdr = [l for l in s.screen().splitlines() if 'Area 900x600' in l]
         expect(calls() == 1 and hdr, f'andra gången: väljaren anropad {calls()} ggr, rubrik {hdr}')
         g = geo()['MulticamA']
         expect(g[0] >= mx + 100 and g[1] >= my + 80 and g[0] + g[2] <= mx + 1000 and g[1] + g[3] <= my + 680, f'kameran utanför området: {g}')
@@ -918,11 +919,13 @@ def t_b6d():
         s.close()
         # välj nytt via raden Område (Enter växlar) -> väljaren körs igen
         s = Session(h, o, env=env)
-        s.wait_for('Kamera A', 5)
-        while 'senaste:' not in [l for l in s.screen().splitlines() if '▌' in l][0]:
-            s.send(DOWN, 0.15)
+        s.wait_for('Camera A', 5)
+        for _ in range(20):   # gå till raden Area (vänta in varje ny bild)
+            sel = [l for l in s.screen().splitlines() if '▌' in l]
+            if sel and 'last:' in sel[0]: break
+            s.send(DOWN if sel else UP, 0.3)
         s.send(ENTER, 0.3)
-        expect('● välj nytt' in s.screen(), s.screen())
+        expect('● pick a new one' in s.screen(), s.screen())
         start_to_preview(s)
         expect(calls() == 2, f'välj nytt: väljaren anropad {calls()} ggr')
         s.send('q'); expect(s.wait_exit(8), 'avslutade inte')
@@ -945,11 +948,11 @@ def t_enter_only():
         start_to_preview(s)
         s.send(F5, 0.6); s.send(' ', 0.4); s.send('x', 0.3)
         time.sleep(1.5)
-        ok1 = not gsr_pids() and 'FÖRHANDSVISNING' in s.screen()
+        ok1 = not gsr_pids() and 'PREVIEW' in s.screen()
         s.send(ENTER, 0.3)
-        ok2 = s.wait_for('SPELAR IN', 20) and bool(wait_until(gsr_pids, 5))
+        ok2 = s.wait_for('RECORDING', 20) and bool(wait_until(gsr_pids, 5))
         time.sleep(1.5)
-        s.send('q', 0.3); s.send('j', 0.3); s.wait_for('klar', 25); s.send('n'); s.wait_exit(5)
+        s.send('q', 0.3); s.send('j', 0.3); s.wait_for('recording is done', 25); s.send('n'); s.wait_exit(5)
         R.add('T-R1', 'GODKÄND' if ok1 and ok2 else 'UNDERKÄND', f'F5/mellanslag/x i förhandsvisning startade inget (gsr={bool(ok1)}); Enter startade; no_anim=true i regeln')
     finally:
         s.close()
@@ -969,7 +972,7 @@ def t_e4():
         subprocess.run(['kill', '-TERM', *pids])
         gone = wait_until(lambda: not mc_clients() and not own_mpv_for_multicam(), 4)
         dt = time.time() - t0
-        ended = s.wait_for('klar', 20) or 'kunde inte' in s.screen()
+        ended = s.wait_for('recording is done', 20) or 'could not' in s.screen()
         files = os.listdir(o)
         R.add('T-E4', 'GODKÄND' if gone and ended else 'UNDERKÄND', f'SIGTERM mot gpu-screen-recorder ({pids}): fönster/mpv borta efter {dt:.2f}s; TUI visade resultat={ended}; fil: {files}; kvarstående: {settle_clean()}')
         s.send('n'); s.wait_exit(5)
@@ -1008,7 +1011,7 @@ def t_picker():
     env = {'PATH': stubdir + ':' + os.environ['PATH']}
     s = Session(make_home('d2c', cfg()), out_dir('d2c'), env=env)
     try:
-        s.wait_for('Kamera A', 5)
+        s.wait_for('Camera A', 5)
         for _ in range(3): s.send(DOWN)
         s.send('c', 0.8)
         expect(os.path.exists(marker), 'hyprpicker anropades inte')
@@ -1032,7 +1035,7 @@ def t_e3():
         gsr = bool(gsr_pids())
         r = sh("omarchy-shell -q omarchy.indicators refresh; echo rc=$?")
         time.sleep(1)
-        s.send('q', 0.3); s.send('j', 0.3); s.wait_for('klar', 25)
+        s.send('q', 0.3); s.send('j', 0.3); s.wait_for('recording is done', 25)
         R.add('T-E3', 'MANUELL', f'gpu-screen-recorder kör under inspelning={gsr} (Omarchys ikon visas av det); indicators refresh: {r.stdout.strip()}; ikonens utseende granskas med tests/visual.py record (e3-bar*.png); verkligt musklick: M')
         s.send('n'); s.wait_exit(5)
     finally:
@@ -1052,7 +1055,7 @@ def t_x():
         time.sleep(30)
         alive_cams = sorted(mc_clients())
         s.send('q', 0.3); s.send('j', 0.3)
-        expect(s.wait_for('klar', 30), s.screen())
+        expect(s.wait_for('recording is done', 30), s.screen())
         f = [x for x in os.listdir(o) if x.endswith('.mp4')]
         expect(len(f) == 1, os.listdir(o))
         fp = os.path.join(o, f[0])
@@ -1073,7 +1076,7 @@ def t_x():
                 start_recording(s)
                 time.sleep(3)
                 s.send('q', 0.3); s.send('j', 0.3)
-                s.wait_for('klar', 25)
+                s.wait_for('recording is done', 25)
                 s.send('n'); s.wait_exit(5)
                 res.append((sorted(os.listdir(o)), settle_clean(), os.listdir(RUNDIR)))
             finally:
@@ -1094,7 +1097,7 @@ def t_a6():
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(home)
     env = dict(os.environ, HOME=home)
-    subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove'], env=env, capture_output=True)
+    subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove', '--no-bar-indicator'], env=env, capture_output=True)
     before = snapshot(home)
     t0 = time.time()
     r = subprocess.run([home + '/.local/bin/multicam', 'install-bgremove', '--yes'], env=env, capture_output=True, text=True)
@@ -1114,7 +1117,7 @@ def t_f():
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(home)
     env = dict(os.environ, HOME=home)
-    subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove'], env=env, capture_output=True)
+    subprocess.run([REPO + '/install.sh', '--yes', '--no-bgremove', '--no-bar-indicator'], env=env, capture_output=True)
     mc = home + '/.local/bin/multicam'
     # F3: korrupt modell via URL-override -> avvisas
     bad = SCRATCH + '/bad.onnx'
@@ -1174,19 +1177,12 @@ def t_f():
 
 @test('T-L1')
 def t_language():
-    """Språkval: engelska som standard, svenska när systemets språk är svenska; MULTICAM_LANG och LC_ALL väger tyngst."""
-    def usage(**e):
-        env = {k: v for k, v in os.environ.items() if k not in ('MULTICAM_LANG', 'LC_ALL', 'LC_MESSAGES', 'LANG')}
-        env.update(e)
-        return subprocess.run([BIN, '--help'], env=env, capture_output=True, text=True).stdout
-    en, sv = 'start the TUI', 'starta TUI:t'
-    cases = {'LANG=en_US.UTF-8': (dict(LANG='en_US.UTF-8'), en), 'LANG=sv_SE.UTF-8': (dict(LANG='sv_SE.UTF-8'), sv),
-             'ingen LANG': ({}, en), 'LC_ALL=sv_SE väger över LANG=en': (dict(LC_ALL='sv_SE.UTF-8', LANG='en_US.UTF-8'), sv),
-             'MULTICAM_LANG=en väger över LANG=sv': (dict(MULTICAM_LANG='en', LANG='sv_SE.UTF-8'), en)}
-    bad = [k for k, (e, want) in cases.items() if want not in usage(**e)]
-    expect(not bad, f'fel språk för: {bad}')
-    # TUI på engelska
-    s = Session(make_home('l1', cfg()), out_dir('l1'), env={'MULTICAM_LANG': 'en'})
+    """Bara engelska: även med svenskt systemspråk är hjälptext och TUI på engelska."""
+    env = {k: v for k, v in os.environ.items() if k not in ('MULTICAM_LANG', 'LC_ALL', 'LC_MESSAGES', 'LANG')}
+    env.update(LANG='sv_SE.UTF-8', MULTICAM_LANG='sv')
+    out = subprocess.run([BIN, '--help'], env=env, capture_output=True, text=True).stdout
+    expect('start the TUI' in out and 'starta' not in out, out)
+    s = Session(make_home('l1', cfg()), out_dir('l1'), env={'LANG': 'sv_SE.UTF-8', 'MULTICAM_LANG': 'sv'})
     try:
         s.wait_for('Camera A', 5)
         scr = s.screen()
@@ -1194,7 +1190,86 @@ def t_language():
         s.send('q'); s.wait_exit(5)
     finally:
         s.close()
-    R.add('T-L1', 'GODKÄND', 'språkval: ' + ', '.join(cases) + '; TUI på engelska (Camera A, Microphone, Preview cameras) utan svenska rester')
+    R.add('T-L1', 'GODKÄND', 'LANG=sv_SE + MULTICAM_LANG=sv: --help och TUI på engelska (Camera A, Microphone, Preview cameras), ingen svensk text')
+
+
+@test('T-S1')
+def t_settings():
+    """Inställningsvyn (S): ändringar sparas direkt och visas vid nästa start; Esc tillbaka till formuläret."""
+    h = make_home('s1', cfg())
+    s = Session(h, out_dir('s1'), env={'MULTICAM_OUTPUT_DIR': ''})
+    try:
+        s.wait_for('Camera A', 5)
+        s.send('S', 0.3)
+        expect('Settings' in s.screen() and 'Save recordings to' in s.screen(), s.screen())
+        s.send(ENTER); s.send('~/mc-out', 0.3); s.send(ENTER)                    # utmapp
+        s.send(DOWN); s.send(RIGHT); s.send(RIGHT)                              # after -> nothing
+        s.send(DOWN); s.send(ENTER)                                             # hide -> off
+        s.send(DOWN); s.send(ENTER)                                             # bar -> off
+        s.send(DOWN); s.send(RIGHT); s.send(RIGHT)                              # step 20 -> 30
+        s.send(DOWN); s.send(LEFT)                                              # big 100 -> 75
+        s.send(DOWN); s.send(ENTER, 0.3)                                        # updcheck -> off
+        kv = conf_kv(h)                                                          # TUI:t kör fortfarande
+        want = {'OUTPUT_DIR': '~/mc-out', 'AFTER_RECORDING': 'nothing', 'HIDE_WINDOW': 'off', 'BAR_INDICATOR': 'off',
+                'MOVE_STEP': '30', 'BIG_STEP': '75', 'UPDATE_CHECK': 'off'}
+        bad = {k: kv.get(k) for k, v in want.items() if kv.get(k) != v}
+        expect(not bad, f'sparades inte direkt: {bad}\n{s.screen()}')
+        s.send(ESC, 0.3)
+        expect('Preview cameras' in s.screen(), 'Esc gick inte tillbaka till formuläret\n' + s.screen())
+        s.send('q'); expect(s.wait_exit(5), 'avslutade inte')
+    finally:
+        s.close()
+    s = Session(h, out_dir('s1'), env={'MULTICAM_OUTPUT_DIR': ''})
+    try:
+        s.wait_for('Camera A', 5); s.send('S', 0.3)
+        scr = s.screen()
+        expect('~/mc-out' in scr and '● just show the file' in scr and '30 px' in scr and '75 px' in scr, scr)
+        s.send(ESC); s.send('q'); s.wait_exit(5)
+    finally:
+        s.close()
+    R.add('T-S1', 'GODKÄND', 'S öppnar inställningar; utmapp, efter inspelning, dölj, bar-ikon, pilsteg, Shift-steg och uppdateringskoll sparades i config medan TUI:t körde och visades vid nästa start; Esc tillbaka')
+
+
+@test('T-H1')
+def t_hide():
+    """Riktigt foot-fönster: vid inspelningsstart döljs TUI:t (special:multicam) och bar-statusen skrivs; multicam stop -> TUI:t tillbaka, status borta, fil sparad."""
+    wake()
+    home = make_home('h1', cfg(shape='circle', ring='on'))
+    o = out_dir('h1')
+    state = '/run/user/1000/multicam/recording'
+    fifo = os.path.join(SCRATCH, 'h1.fifo')
+    if os.path.exists(fifo): os.unlink(fifo)
+    os.mkfifo(fifo)
+    env = hypr_env(); env['HOME'] = home; env['MULTICAM_OUTPUT_DIR'] = o; env['MULTICAM_NO_UPDATE_CHECK'] = '1'; env['MULTICAM_LOG'] = home + '/multicam.log'
+    foot = subprocess.Popen(['foot', '--app-id=TUI.float', '-e', 'bash', '-c', f'exec {BIN} <{fifo}'], env=env)
+    tui = lambda: next((c for c in clients() if c['class'] == 'TUI.float'), None)
+    try:
+        fd = os.open(fifo, os.O_WRONLY)
+        expect(wait_until(tui, 8), 'foot-fönster saknas')
+        time.sleep(1)
+        os.write(fd, b'\x1b[15~')
+        expect(wait_until(lambda: len(mc_clients()) >= 1, 10), 'kamera ej mappad')
+        time.sleep(0.5)
+        os.write(fd, b'\r')
+        expect(wait_until(gsr_pids, 10), 'inspelningen startade inte')
+        hidden = wait_until(lambda: tui()['workspace']['name'] == 'special:multicam', 5)
+        st = open(state).read().strip() if wait_until(lambda: os.path.exists(state), 3) else ''
+        cams_visible = all(c['workspace']['id'] > 0 for c in mc_clients().values())
+        time.sleep(2)
+        r = subprocess.run([BIN, 'stop'], env=env, capture_output=True, text=True)
+        back = wait_until(lambda: tui() and tui()['workspace']['id'] > 0, 10)
+        gone = wait_until(lambda: not os.path.exists(state) and not gsr_pids(), 15)
+        expect(wait_until(lambda: [f for f in os.listdir(o) if f.endswith('.mp4')], 15), 'ingen fil')
+        os.write(fd, b'n')
+        foot.wait(timeout=10)
+        os.close(fd)
+        ok = bool(hidden) and st.isdigit() and cams_visible and r.returncode == 0 and bool(back) and bool(gone)
+        R.add('T-H1', 'GODKÄND' if ok else 'UNDERKÄND',
+              f'dold under inspelning (special:multicam)={bool(hidden)}, kamerorna synliga={cams_visible}, statusfil för bar-ikonen={st!r}; '
+              f'multicam stop rc={r.returncode}, TUI tillbaka på vanlig arbetsyta={bool(back)}, status borta och inspelaren avslutad={bool(gone)}, fil={os.listdir(o)}')
+    finally:
+        if foot.poll() is None: foot.terminate()
+        shutil.rmtree(o, ignore_errors=True)
 
 
 @test('T-U1')
@@ -1213,9 +1288,9 @@ def t_update():
     env = dict(os.environ, HOME=home)
     mc = home + '/.local/bin/multicam'
     run = lambda *a: subprocess.run(a, env=env, capture_output=True, text=True)
-    r = run(base + '/clone/install.sh', '--yes', '--no-bgremove'); expect(r.returncode == 0, r.stdout + r.stderr)
+    r = run(base + '/clone/install.sh', '--yes', '--no-bgremove', '--no-bar-indicator'); expect(r.returncode == 0, r.stdout + r.stderr)
     expect(run(mc, 'check-update').returncode == 1, 'check-update: uppdatering trots att inget ändrats')
-    u = run(mc, 'update', '--yes'); expect('uppdaterat' in u.stdout, 'update när allt är aktuellt: ' + u.stdout + u.stderr)
+    u = run(mc, 'update', '--yes'); expect('up to date' in u.stdout, 'update när allt är aktuellt: ' + u.stdout + u.stderr)
     c = base + '/clone'
     s = re.sub(r'(?m)^VERSION=\S+', 'VERSION=9.9.9', open(c + '/bin/multicam').read())
     open(c + '/bin/multicam', 'w').write(s)

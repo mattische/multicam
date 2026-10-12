@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" viewBox="0 0 1000 560" width="1000" height="560" font-family="JetBrainsMono Nerd Font, JetBrains Mono, DejaVu Sans Mono, monospace" font-size="17">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1000" height="560" fill="#232433"/>
+  <g filter="url(#shadow)">
+    <rect x="30" y="30" width="940" height="500" rx="12" fill="#1a1b26" stroke="#7aa2f7" stroke-width="2"/>
+  </g>
+  <g fill="#c0caf5">
+    <rect x="60" y="62" width="16" height="12" rx="2" fill="#7aa2f7"/><path d="M76 68 l7 -5 v10z" fill="#7aa2f7"/>
+    <text x="98" y="76"><tspan fill="#7aa2f7" font-weight="bold">multicam</tspan><tspan fill="#737aa2">  1.3.0   Settings</tspan></text>
+    <text x="60" y="100" fill="#737aa2">saved as soon as you change them</text>
+
+    <text x="60" y="144" fill="#737aa2" font-weight="bold">RECORDING</text>
+    <rect x="60" y="154" width="880" height="26" fill="#283457"/>
+    <rect x="60" y="154" width="4" height="26" fill="#7aa2f7"/>
+    <text x="70" y="173" font-weight="bold">Save recordings to</text>
+    <text x="290" y="173">~/Videos/demos</text>
+    <text x="450" y="173" fill="#737aa2">⏎ edit</text>
+    <text x="70" y="202">After recording</text>
+    <text x="290" y="202"><tspan fill="#7aa2f7">●</tspan> <tspan font-weight="bold">ask to open in omacut</tspan>   <tspan fill="#737aa2">○ open in omacut   ○ just show the file</tspan></text>
+    <text x="70" y="228">Hide while recording</text>
+    <text x="290" y="228"><tspan fill="#7aa2f7">●</tspan> on  <tspan fill="#737aa2">multicam comes back when the recording stops</tspan></text>
+    <text x="70" y="254">Bar indicator</text>
+    <text x="290" y="254"><tspan fill="#7aa2f7">●</tspan> on  <tspan fill="#737aa2">blinking red icon in the bar, click stops</tspan></text>
+
+    <text x="60" y="298" fill="#737aa2" font-weight="bold">CAMERA KEYS</text>
+    <text x="70" y="326">Arrow step</text><text x="290" y="326">20 px</text>
+    <text x="70" y="352">Shift + arrow step</text><text x="290" y="352">100 px</text>
+
+    <text x="60" y="396" fill="#737aa2" font-weight="bold">APP</text>
+    <text x="70" y="424">Check for updates</text>
+    <text x="290" y="424"><tspan fill="#7aa2f7">●</tspan> on  <tspan fill="#737aa2">at start (git ls-remote)</tspan></text>
+
+    <rect x="60" y="460" width="880" height="1.5" fill="#414868"/>
+    <g font-size="15">
+      <rect x="60" y="476" width="30" height="24" fill="#24283b"/><text x="66" y="493" fill="#7aa2f7" font-weight="bold">↑↓</text><text x="98" y="493" fill="#737aa2">row</text>
+      <rect x="150" y="476" width="30" height="24" fill="#24283b"/><text x="156" y="493" fill="#7aa2f7" font-weight="bold">←→</text><text x="188" y="493" fill="#737aa2">change</text>
+      <rect x="268" y="476" width="22" height="24" fill="#24283b"/><text x="274" y="493" fill="#7aa2f7" font-weight="bold">⏎</text><text x="298" y="493" fill="#737aa2">edit/toggle</text>
+      <rect x="420" y="476" width="40" height="24" fill="#24283b"/><text x="426" y="493" fill="#7aa2f7" font-weight="bold">Esc</text><text x="468" y="493" fill="#737aa2">back</text>
+    </g>
+  </g>
+</svg>

@@ -4,8 +4,7 @@ import os, pty, sys, time, json, subprocess, select, re, shutil, fcntl, termios,
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, 'bin', 'multicam')
 SCRATCH = os.environ.get('MC_SCRATCH', f'/tmp/claude-{os.getuid()}/multicam-tests')
-# testerna förväntar sig svensk text och ska inte göra nätverksanrop
-os.environ['MULTICAM_LANG'] = 'sv'
+# testerna ska inte göra nätverksanrop
 os.environ['MULTICAM_NO_UPDATE_CHECK'] = '1'
 ANSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]')
 
@@ -278,7 +277,7 @@ def start_to_preview(sess, timeout=15):
     """Formulär -> F5 -> vänta på förhandsvisning och mappade kamerafönster."""
     assert sess.wait_for('multicam', 5), 'formuläret visades inte'
     sess.send(F5)
-    assert sess.wait_for('FÖRHANDSVISNING', timeout), 'ingen förhandsvisning:\n' + sess.screen()
+    assert sess.wait_for('PREVIEW', timeout), 'ingen förhandsvisning:\n' + sess.screen()
     return True
 
 

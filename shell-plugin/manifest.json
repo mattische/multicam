@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "multicam.recording",
+  "name": "Multicam recording",
+  "version": "1.0.0",
+  "author": "multicam",
+  "description": "Blinking red indicator while multicam is recording; click to stop",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Recording.qml"
+  },
+  "barWidget": {
+    "displayName": "Multicam recording",
+    "description": "Blinking red indicator while multicam is recording; click to stop",
+    "category": "Status",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
