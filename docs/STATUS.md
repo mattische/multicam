@@ -10,12 +10,28 @@ _Added after 1.0.0: English UI with system-language detection (Swedish kept), op
 
 ## Where things stand
 - multicam 1.4.0 is complete per `docs/requirements.md` (requirements A–F plus B6: full screen / area / window).
+- The GitHub repository is public; release `v1.4.0` exists (tag + GitHub release). `packaging/aur/PKGBUILD` has the real
+  sha256 of the v1.4.0 tarball and builds with `makepkg` (checked; not installed, namcap not run).
+- `curl -fsSL https://raw.githubusercontent.com/mattische/multicam/main/install.sh | bash` was tested against GitHub.
 - Test results: `docs/TEST-REPORT.md`. The automatic suite passes on the original machine (mbp-omarchy).
 - Installed there with the keybind `SUPER + ALT + M` (line ending in `-- multicam` in `~/.config/hypr/bindings.lua`).
 
+## Next steps (pick up here)
+1. Publish the AUR package (needs the user's AUR account + ssh key; see `packaging/NOTES.md`):
+   `git clone ssh://aur@aur.archlinux.org/multicam.git`, copy `packaging/aur/PKGBUILD` and `.SRCINFO`, commit, push.
+   Then `yay -S multicam` should work. Run `namcap` on the built package first if available.
+2. Optional: publish the bar plugin on its own: a separate public repo (e.g. `mattische/omarchy-multicam-plugin`) whose
+   root is `packaging/omarchy-plugin/` (`omarchy plugin add` clones the whole repo and needs `manifest.json` at the
+   root), then submit it to the Omarchy plugin marketplace. `shell-plugin/` is the single source; keep the copy identical.
+3. Each new release: bump `VERSION` in `bin/multicam`, tag `vX.Y.Z`, `gh release create`, then in `packaging/aur/`
+   set `pkgver`, run `updpkgsums` and `makepkg --printsrcinfo > .SRCINFO`, and push those to the AUR.
+- Known: T-E2 "stop from outside" has a small margin to its 1.0 s limit (1.08 s once, re-runs 0.49–0.88 s).
+- Known: enabling the bar plugin makes the Omarchy shell busy for a few seconds, so `install.sh` may print
+  "omarchy-shell is not responding"; the plugin is still enabled.
+
 ## Continue on another machine
 ```
-git clone git@github.com:mattische/multicam.git && cd multicam
+git clone https://github.com/mattische/multicam.git && cd multicam
 ./install.sh --keybind        # or ./install.sh for no keybind; the background-removal add-on is included (--no-bgremove skips it)
 ```
 Requirements: Omarchy with Hyprland 0.56+ and Lua config. Only Lua dispatches are used (see BRIEF.md).
