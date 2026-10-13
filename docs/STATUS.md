@@ -1,5 +1,7 @@
 # Status and handoff (2026-10-12)
 
+_README is now short (what, install, update, uninstall, dependencies); everything else is in `docs/GUIDE.md`. The preview/recording screen shows what you are changing and the recording settings at the bottom._
+
 _Ring thickness can be 0 (no border); the preview is started from the `Preview cameras` row (F5 is no longer advertised, the key still works); test T-T1._
 
 _Navigation hints: the form, preview and recording screens now say what Enter and Esc do (Esc in the preview goes back to the form; a recording is stopped only by F12 in the window, the bar icon, the keybind or `multicam stop` - q/Esc/Enter are ignored while recording); test T-N1._
@@ -62,4 +64,4 @@ Screenshots/frames are written outside the repo and must never be committed (the
 - `packaging/aur/`: PKGBUILD + .SRCINFO. `packaging/NOTES.md`: package mode and publishing steps.
 - `docs/requirements.md`: requirements spec. `docs/BRIEF.md`: technical facts and design for developers/agents.
 - `docs/prototypes/`: early prototypes (reference only).
-- `docs/images/`: illustrations for the README (SVG).
+- `docs/GUIDE.md`: the full user guide (the README is the short version). `docs/images/`: illustrations (SVG).

@@ -1660,10 +1660,6 @@ draw_run() {
     bopt+=(0 0)
   done
   body+=(""); bopt+=(1)
-  local mv sz
-  if [[ $MODE == move ]]; then mv="$ACC$BO[MOVE]$R"; sz="${SUB}size$R"
-  else mv="${SUB}move$R"; sz="$ACC$BO[SIZE]$R"; fi
-  body+=(" ${SUB}Mode$R  $mv  $sz      ${SUB}Selected camera: $R$FG$BO${CAMS[$SEL]}$R"); bopt+=(0)
   msg_line; hr; foot+=("$MSGL" "$HRL")
   local ctx=() qchip=(q quit)
   ((REC)) && qchip=()   # q does not stop a recording (F12 does)
@@ -1673,6 +1669,12 @@ draw_run() {
     s "shape" r "ring" "c C" "colour" p "next colour" "[ ]" "thickness" b "background" \
     "${qchip[@]}"
   foot+=("${CHIPL[@]}")
+  local what how mic=${MIC_DESC:-${MIC:-none}} cd=$COUNTDOWN
+  if [[ $MODE == move ]]; then what="$ACC$BO[MOVE]$R"; how="${SUB}arrows move $STEP px, Shift $BIG px  ·  m: change size instead$R"
+  else what="$ACC$BO[SIZE]$R"; how="${SUB}arrows change the size 10 %, Shift 25 %  ·  m: move instead$R"; fi
+  [[ $cd =~ ^[0-9]+$ ]] && cd="${cd} s" || cd=off
+  foot+=("" " ${SUB}Changing$R  ${FG}camera ${CAMS[$SEL]}$R  $what  $how"
+    " ${SUB}Recording$R  ${FG}$where$R ${SUB}·$R ${FG}mic ${mic:0:28}$R ${SUB}·$R ${FG}desktop audio $DAUDIO$R ${SUB}·$R ${FG}countdown $cd$R")
   fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
 }
 
