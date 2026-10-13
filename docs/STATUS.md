@@ -1,5 +1,7 @@
 # Status and handoff (2026-10-12)
 
+_Ring thickness can be 0 (no border); the preview is started from the `Preview cameras` row (F5 is no longer advertised, the key still works); test T-T1._
+
 _Navigation hints: the form, preview and recording screens now say what Enter and Esc do (Esc in the preview goes back to the form; a recording is stopped only by F12 in the window, the bar icon, the keybind or `multicam stop` - q/Esc/Enter are ignored while recording); test T-N1._
 
 _1.4.0: countdown before recording (3/5/10 s or off, `COUNTDOWN`); window capture follows a moving window (`FOLLOW_WINDOW`: records the window's monitor, tracks the window, moves the cameras along, crops with ffmpeg afterwards); everything in the repo is English (code comments, tests, docs; the spec is now `docs/requirements.md`); MIT licence; app icon (`assets/multicam.svg`); system-wide install from an AUR package (`packaging/aur/`, package mode in `bin/multicam`: `/usr/share/multicam`, update/uninstall point to yay/pacman); the bar plugin is now `io.github.mattische.multicam` (`shell-plugin/`, `multicam setup-bar`, replaces `multicam.recording`) and is prepared for publishing as an Omarchy plugin (`packaging/omarchy-plugin/`, `packaging/NOTES.md`); `multicam setup-keybind`; one-line install with `curl … | bash`. Tests: `tests/features.py` (F-C1–F-C4 countdown, F-F1/F-F2 follow), T-A1 extended (icon, setup-bar migration)._

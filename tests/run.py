@@ -1362,7 +1362,7 @@ def t_navigation():
     s = Session(make_home('n1', cfg(extra='COUNTDOWN=off\n')), o)
     try:
         expect(s.wait_for('Preview cameras', 5), s.screen())
-        expect('then press' in s.screen() and 'preview, then record' in s.screen(), 'form hints missing:\n' + s.screen())
+        expect('then press' in s.screen() and 'F5' not in s.screen(), 'form hints missing:\n' + s.screen())
         s.send(F5)
         expect(s.wait_for('PREVIEW', 15), s.screen())
         scr = s.screen()
@@ -1387,6 +1387,45 @@ def t_navigation():
         s.close()
         shutil.rmtree(o, ignore_errors=True)
     R.add('T-N1', 'PASS', 'form hint (step 1 ... then press Enter), preview banner (Enter start, Esc back, q quit), Esc returns to the form with cameras closed, preview again, Enter starts, recording banner (F12 stop, multicam stop), q/Esc/Enter/y do not stop, F12 stops and saves')
+
+
+@test('T-T1')
+def t_thickness_zero():
+    """Ring thickness 0 = no border: shown as 'none', saved as CAM_A_THICK=0, kept at the next start; [ ] in the preview reaches 0; no F5 hint."""
+    wake()
+    home = make_home('t1', cfg(ring='on', thick=1))
+    s = Session(home, None)
+    try:
+        expect(s.wait_for('Preview cameras', 5), s.screen())
+        expect('F5' not in s.screen(), 'F5 is still advertised:\n' + s.screen())
+        for _ in range(4): s.send(DOWN)
+        s.send(LEFT, 0.4)
+        expect('none' in s.screen() and 'no border' in s.screen(), s.screen())
+        s.send(LEFT, 0.4); s.send(LEFT, 0.4)
+        expect('none' in s.screen(), 'thickness went below 0:\n' + s.screen())
+        s.send('q'); expect(s.wait_exit(5), 'exit')
+    finally:
+        s.close()
+    expect('CAM_A_THICK=0' in open(home + '/.config/multicam/config').read(), 'thickness 0 not saved')
+    s = Session(home, None)
+    try:
+        expect(s.wait_for('Preview cameras', 5), s.screen())
+        for _ in range(4): s.send(DOWN)
+        expect('none' in s.screen(), 'thickness 0 not kept:\n' + s.screen())
+        s.send(RIGHT, 0.4)
+        expect('1 px' in s.screen(), s.screen())
+        s.send(LEFT, 0.3)
+        for _ in range(11): s.send(DOWN)   # to the Preview row
+        s.send(ENTER)
+        expect(s.wait_for('PREVIEW', 15), s.screen())
+        expect('ring off' in s.screen(), 'thickness 0 should show as ring off in the preview:\n' + s.screen())
+        s.send(']', 0.4); expect('1 px' in s.screen(), s.screen())
+        s.send('[', 0.4); expect('ring off' in s.screen(), s.screen())
+        s.send('[', 0.4); expect('ring off' in s.screen(), 'thickness went below 0:\n' + s.screen())
+        s.send(ESC, 0.5); s.send('q'); s.wait_exit(5)
+    finally:
+        s.close()
+    R.add('T-T1', 'PASS', 'thickness: Left from 1 px -> none (min 0), saved as 0 and kept at the next start, Right -> 1 px; preview opened with Enter on the last row; no F5 hint in the form')
 
 
 def main():

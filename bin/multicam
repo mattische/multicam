@@ -558,7 +558,7 @@ load_config() {
       CAM_[AB]_SHAPE) [[ $v == circle || $v == rect ]] && C[${k:4:1}.shape]=$v ;;
       CAM_[AB]_RING) [[ $v == on || $v == off ]] && C[${k:4:1}.ring]=$v ;;
       CAM_[AB]_COLOR) [[ $v =~ ^#[0-9a-f]{6}$ ]] && C[${k:4:1}.color]=$v ;;
-      CAM_[AB]_THICK) [[ $v =~ ^[0-9]+$ ]] && ((v >= 1 && v <= 12)) && C[${k:4:1}.thick]=$v ;;
+      CAM_[AB]_THICK) [[ $v =~ ^[0-9]+$ ]] && ((v >= 0 && v <= 12)) && C[${k:4:1}.thick]=$v ;;
       CAM_[AB]_BG) [[ $v == on || $v == off ]] && C[${k:4:1}.bg]=$v ;;
       CAM_[AB]_RX) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.rx]=$v ;;
       CAM_[AB]_RY) [[ $v =~ ^-?[0-9]+$ ]] && C[${k:4:1}.ry]=$v ;;
@@ -1273,7 +1273,7 @@ draw_form() {
       color) sub_row=1; label="border colour"; swatch "${C[$id.color]}"; val="$SW $FG${C[$id.color]}$R"; hint="←→" ;;
       thick) sub_row=1; label=thickness
         local bar on off; printf -v on '%*s' "${C[$id.thick]}" ''; printf -v off '%*s' $((12 - C[$id.thick])) ''
-        val="$ACC${on// /━}$MUT${off// /─}$R $FG${C[$id.thick]} px$R"; hint="←→" ;;
+        val="$ACC${on// /━}$MUT${off// /─}$R $FG${C[$id.thick]} px$R"; ((C[$id.thick] == 0)) && val="$MUT${off// /─}$R ${FG}none$R"; hint="←→  (0 = no border)" ;;
       bg) sub_row=1; label="remove background"; toggle "${C[$id.bg]}"; val=$RAD ;;
       bgsetup) label="Remove background"; val="${YEL}not installed - press Enter to install (transparent camera background)$R" ;;
       mic)
@@ -1331,7 +1331,7 @@ draw_form() {
   case ${RT[$ROW]} in
     color) ctx=(c "colour picker" C "hex code") ;;
   esac
-  chips "↑↓" "row" "←→" "change" "⏎" "select" "${ctx[@]}" F5 "preview, then record" S "settings" U "update" q "quit"
+  chips "↑↓" "row" "←→" "change" "⏎" "select" "${ctx[@]}" S "settings" U "update" q "quit"
   foot+=("${CHIPL[@]}")
   fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
 }
@@ -1375,7 +1375,7 @@ form_change() { # delta ±1
     shape) [[ ${C[$id.shape]} == circle ]] && C[$id.shape]=rect || C[$id.shape]=circle ;;
     ring) [[ ${C[$id.ring]} == on ]] && C[$id.ring]=off || C[$id.ring]=on ;;
     bg) [[ ${C[$id.bg]} == on ]] && C[$id.bg]=off || C[$id.bg]=on ;;
-    thick) p=$((C[$id.thick] + d)); ((p < 1)) && p=1; ((p > 12)) && p=12; C[$id.thick]=$p ;;
+    thick) p=$((C[$id.thick] + d)); ((p < 0)) && p=0; ((p > 12)) && p=12; C[$id.thick]=$p ;;
     color)
       idx=-1
       for i in "${!PRESETS[@]}"; do [[ ${C[$id.color]} == "#${PRESETS[$i]}" ]] && idx=$i; done
@@ -1648,7 +1648,7 @@ draw_run() {
       line=" $SUB$id  $(cam_label "$id")$R"
     fi
     if [[ ${C[$id.shape]} == circle ]]; then det=circle; else det=rectangle; fi
-    if [[ ${C[$id.ring]} == on ]]; then swatch "${C[$id.color]}"; det+=" · ring $R$SW$SUB ${C[$id.thick]} px"
+    if [[ ${C[$id.ring]} == on && ${C[$id.thick]} -gt 0 ]]; then swatch "${C[$id.color]}"; det+=" · ring $R$SW$SUB ${C[$id.thick]} px"
     else det+=" · ring off"; fi
     det+=" · ${C[$id.size]} px · $((MX + C[$id.rx])),$((MY + C[$id.ry]))"
     [[ ${C[$id.bg]} == on ]] && det+=" · remove background"
@@ -1826,7 +1826,7 @@ run_loop() { # 0 = done (result in RESULT_FILE), 1 = quit without a result
           for i in "${!PRESETS[@]}"; do [[ ${C[$id.color]} == "#${PRESETS[$i]}" ]] && idx=$i; done
           if ((idx < 0)); then idx=0; else idx=$(cycle_idx ${#PRESETS[@]} "$idx" "$d"); fi
           C[$id.color]="#${PRESETS[$idx]}" ;;
-        '[') ((C[$id.thick] > 1)) && C[$id.thick]=$((C[$id.thick] - 1)) ;;
+        '[') ((C[$id.thick] > 0)) && C[$id.thick]=$((C[$id.thick] - 1)) ;;
         ']') ((C[$id.thick] < 12)) && C[$id.thick]=$((C[$id.thick] + 1)) ;;
         c) if pick_hyprpicker; then C[$id.color]=$HEX; fi ;;
         C) if hex_prompt "$id"; then C[$id.color]=$HEX; fi ;;

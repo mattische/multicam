@@ -137,7 +137,7 @@ The update source is the `origin` URL of the clone you installed from.
 ![The multicam form](docs/images/form.svg)
 
 1. Form: choose camera A / B (each "off" or a device; the same device cannot be used twice), shape, ring,
-   ring colour and thickness, microphone, desktop audio and screen. Press `F5` (or Enter on the last row).
+   ring colour and thickness, microphone, desktop audio and screen. Then select the `Preview cameras` row (last row) and press Enter.
 2. Preview: the cameras appear and are placed, nothing is recorded yet. Arrange them, then press `Enter` to start recording.
    `Esc` goes back to the form (the cameras close); `q` quits multicam.
    By default a 3-second countdown with big digits runs first (`Esc` or `q` cancels back to the preview without
@@ -184,7 +184,7 @@ Everything you set is written to `~/.config/multicam/config` as soon as it chang
 start opens with the same cameras, shapes, ring colours and thickness, background removal, microphone, desktop audio,
 capture mode and screen. Camera positions and sizes are remembered separately for full screen and for area/window
 recording (the latter relative to the area). In area mode the last area is remembered too: the form then shows an
-`Area` row where you choose `last: WxH @ X,Y` (reused at `F5` without the picker, as long as it is on a connected screen)
+`Area` row where you choose `last: WxH @ X,Y` (reused when you start the preview without the picker, as long as it is on a connected screen)
 or `pick a new one`. `o` in the preview always opens the picker. Saved devices that are not connected are shown as
 missing and kept, never silently replaced.
 
@@ -197,7 +197,7 @@ Omarchy also themes). `NO_COLOR=1` turns colours off. The icon in the header nee
 ### What to record: full screen, area or window
 
 The form row `Record` selects `full screen` (default), `area` (free rectangle) or
-`window`. When you press `F5` in area/window mode, multicam first runs Omarchy's own picker
+`window`. When you start the preview in area/window mode, multicam first runs Omarchy's own picker
 (`omarchy-capture-region region` / `windows`): drag a rectangle with the mouse, or for windows use
 Tab / arrow keys and Enter (Esc cancels and returns to the form with a message; nothing is started).
 The picked rectangle becomes the camera bounds, so cameras, snapping (1-9) and clamping always stay
@@ -243,7 +243,7 @@ Form screen
 | `C` (or Enter on the colour row) | type a hex colour |
 | `c` | colour picker (`hyprpicker`, needs a mouse click) |
 | ← → on the colour row | cycle the 8 preset colours |
-| `F5` | preview cameras |
+| Enter on `Preview cameras` | preview cameras |
 | `S` | settings view |
 | `U` | check for / install an update |
 | ←/→ or Enter on `Area` | reuse the last area / pick a new one (area mode) |
@@ -265,7 +265,7 @@ Preview / recording screen
 | `r` | ring on / off |
 | `p` / `P` | next / previous preset ring colour |
 | `c` / `C` | colour picker / hex input |
-| `[` `]` | ring thickness 1-12 px (default 4) |
+| `[` `]` | ring thickness 0-12 px (default 4; 0 = no border) |
 | `b` | background removal on / off (add-on) |
 | `Enter` | in the preview: start recording (after the countdown); multicam then hides until the recording stops |
 | `F12` | stop the recording (when the multicam window is shown and focused) |
