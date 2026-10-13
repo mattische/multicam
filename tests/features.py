@@ -29,7 +29,7 @@ def conf_kv(home):
 
 
 def stop_and_finish(s, tmo=60):
-    s.send('q', 0.3); s.send('j', 0.3)
+    s.send(F12, 0.3)
     expect(s.wait_for('recording is done', tmo), 'no result:\n' + s.screen())
     s.send('n'); s.wait_exit(5)
 
@@ -217,7 +217,7 @@ def follow_case(tid, close=False):
             expect(wait_until(lambda: not any(x['class'] == 'MCFollowTest' for x in clients()), 3), 'test window still open')
         time.sleep(2.5)
         t0 = time.time()
-        s.send('q', 0.3); s.send('j', 0.1)
+        s.send(F12, 0.3)
         seen = s.wait_for('Processing', 30)
         pct = re.findall(r'Processing…\s+(\d+) %', s.screen())
         expect(s.wait_for('recording is done', 120), 'no result:\n' + s.screen())

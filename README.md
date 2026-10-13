@@ -139,6 +139,7 @@ The update source is the `origin` URL of the clone you installed from.
 1. Form: choose camera A / B (each "off" or a device; the same device cannot be used twice), shape, ring,
    ring colour and thickness, microphone, desktop audio and screen. Press `F5` (or Enter on the last row).
 2. Preview: the cameras appear and are placed, nothing is recorded yet. Arrange them, then press `Enter` to start recording.
+   `Esc` goes back to the form (the cameras close); `q` quits multicam.
    By default a 3-second countdown with big digits runs first (`Esc` or `q` cancels back to the preview without
    recording, `Enter` starts at once; set 5 s, 10 s or off in the settings).
 
@@ -266,9 +267,14 @@ Preview / recording screen
 | `c` / `C` | colour picker / hex input |
 | `[` `]` | ring thickness 1-12 px (default 4) |
 | `b` | background removal on / off (add-on) |
-| `Enter` | start recording (from preview; F5 does not start it) after the countdown; multicam then hides until the recording stops |
+| `Enter` | in the preview: start recording (after the countdown); multicam then hides until the recording stops |
+| `F12` | stop the recording (when the multicam window is shown and focused) |
 | `Esc`, `q` during the countdown | cancel, back to the preview (nothing is recorded); `Enter` skips the rest of the countdown |
-| `q`, `Esc` | quit the preview (while recording, if the window is shown: stop, asks first) |
+| `Esc` | in the preview: back to the form (cameras close) |
+| `q` | in the preview: quit multicam |
+
+While recording, `q`, `Esc` and `Enter` do nothing: you often type code while recording, so only `F12` stops it in the multicam window.
+Other ways to stop: a click on the bar icon, the keybind again, or `multicam stop`.
 
 Deviation from the spec: the spec uses ← / → for the preset colours, but on the recording screen the
 arrows move/resize. There the presets are on `p` / `P`; on the form screen ← / → work as specified.

@@ -219,6 +219,7 @@ class Session:
 UP, DOWN, RIGHT, LEFT = '\x1b[A', '\x1b[B', '\x1b[C', '\x1b[D'
 SUP, SDOWN, SRIGHT, SLEFT = '\x1b[1;2A', '\x1b[1;2B', '\x1b[1;2C', '\x1b[1;2D'
 PGUP, PGDN, F5, ESC, ENTER, TAB = '\x1b[5~', '\x1b[6~', '\x1b[15~', '\x1b', '\r', '\t'
+F12 = '\x1b[24~'   # stops a recording
 
 def _detect_cams():
     out = subprocess.run('omarchy-capture-webcam-list', capture_output=True, text=True).stdout

@@ -521,8 +521,7 @@ def t_record_main():
         rec_ptr = open('/tmp/omarchy-screenrecord-filename').read().strip()
         t_start = os.stat('/tmp/omarchy-screenrecord-filename').st_mtime   # Omarchy confirms that the recording is running
         time.sleep(7)
-        s.send('q', 0.3)
-        s.send('j', 0)
+        s.send(F12, 0)
         wait_until(lambda: not gsr_pids(), 10, 0.02)
         t_stop = time.time()   # when gpu-screen-recorder exited
         expect(s.wait_for('recording is done', 25), s.screen())
@@ -548,7 +547,7 @@ def t_record_main():
         sh(f'ffmpeg -y -v error -ss 0.2 -i "{f}" -frames:v 1 -vf scale=640:-1 "{png}"')
         R.add('T-C1', 'MANUAL', f'frame at 0.2 s saved (not committed): {png}; the camera image in the frame is reviewed manually (see visual.py)')
         probs = settle_clean()
-        R.add('T-E1(q)', 'PASS' if not probs else 'FAIL', f'q + j confirmation: {probs or "no windows/rules/mpv left, mic restored"}')
+        R.add('T-E1(q)', 'PASS' if not probs else 'FAIL', f'F12 stop: {probs or "no windows/rules/mpv left, mic restored"}')
         shutil.rmtree(o, ignore_errors=True)
     finally:
         s.close()
@@ -567,7 +566,7 @@ def t_collision():
         # create a collision
         open(os.path.join(o, want), 'w').write('existing')
         time.sleep(3)
-        s.send('q', 0.3); s.send('j', 0.3)
+        s.send(F12, 0.3)
         expect(s.wait_for('recording is done', 25), s.screen())
         files = sorted(os.listdir(o))
         s.send('n'); s.wait_exit(5)
@@ -587,7 +586,9 @@ def t_e_signals():
     # Esc in preview
     s = run_session('e1', cfg())
     start_to_preview(s)
-    s.send(ESC, 0.3); ok = s.wait_exit(5)
+    s.send(ESC, 0.3)
+    back = s.wait_for('Preview cameras', 5) and not mc_clients()   # Esc = back to the form with the cameras closed
+    s.send('q', 0.3); ok = back and s.wait_exit(5)
     res['E1 Esc (preview)'] = (ok, settle_clean())
     s.close()
     for name, how in [('Ctrl+C', 'int'), ('SIGHUP (closed terminal)', 'hup'), ('SIGTERM', 'term')]:
@@ -646,7 +647,7 @@ def t_c3_volume():
             start_recording(s)
             during = default_source()
             time.sleep(5)
-            s.send('q', 0.3); s.send('j', 0.3)
+            s.send(F12, 0.3)
             expect(s.wait_for('recording is done', 25), s.screen())
             f = [x for x in os.listdir(o) if x.endswith('.mp4')][0]
             r = sh(f'ffmpeg -hide_banner -nostats -i "{o}/{f}" -af volumedetect -vn -f null - 2>&1 | grep -E "mean_volume|max_volume"')
@@ -741,7 +742,7 @@ def t_screen_focus():
         time.sleep(2)
         foc_after = [m for m in monitors() if m['focused']][0]['name']
         act1 = active_addr()
-        s.send('q', 0.3); s.send('j', 0.3)
+        s.send(F12, 0.3)
         expect(s.wait_for('recording is done', 25), s.screen())
         f = [x for x in os.listdir(o) if x.endswith('.mp4')][0]
         j = json.loads(sh(f'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of json "{o}/{f}"').stdout)['streams'][0]
@@ -808,7 +809,7 @@ def region_test(tid, capture, rect, label_expect=None):
         shim_left = [x for x in sessions if os.path.exists(f'{run}/{x}/shim')]
         frame_g = geo()
         grim('/tmp/claude-1000/b6-live.png')
-        s.send('q', 0.3); s.send('j', 0.3)
+        s.send(F12, 0.3)
         expect(s.wait_for('recording is done', 25), s.screen())
         f = [x for x in os.listdir(o) if x.endswith('.mp4')]
         expect(len(f) == 1, os.listdir(o))
@@ -978,7 +979,7 @@ def t_enter_only():
         s.send(ENTER, 0.3)
         ok2 = s.wait_for('RECORDING', 20) and bool(wait_until(gsr_pids, 5))
         time.sleep(1.5)
-        s.send('q', 0.3); s.send('j', 0.3); s.wait_for('recording is done', 25); s.send('n'); s.wait_exit(5)
+        s.send(F12, 0.3); s.wait_for('recording is done', 25); s.send('n'); s.wait_exit(5)
         R.add('T-R1', 'PASS' if ok1 and ok2 else 'FAIL', f'F5/space/x in preview started nothing (gsr={bool(ok1)}); Enter started; no_anim=true in the rule')
     finally:
         s.close()
@@ -1061,7 +1062,7 @@ def t_e3():
         gsr = bool(gsr_pids())
         r = sh("omarchy-shell -q omarchy.indicators refresh; echo rc=$?")
         time.sleep(1)
-        s.send('q', 0.3); s.send('j', 0.3); s.wait_for('recording is done', 25)
+        s.send(F12, 0.3); s.wait_for('recording is done', 25)
         R.add('T-E3', 'MANUAL', f'gpu-screen-recorder running during recording={gsr} (that is what shows Omarchy\'s icon); indicators refresh: {r.stdout.strip()}; the icon\'s look is reviewed with tests/visual.py record (e3-bar*.png); real mouse click: M')
         s.send('n'); s.wait_exit(5)
     finally:
@@ -1080,7 +1081,7 @@ def t_x():
         start_recording(s, 25)
         time.sleep(30)
         alive_cams = sorted(mc_clients())
-        s.send('q', 0.3); s.send('j', 0.3)
+        s.send(F12, 0.3)
         expect(s.wait_for('recording is done', 30), s.screen())
         f = [x for x in os.listdir(o) if x.endswith('.mp4')]
         expect(len(f) == 1, os.listdir(o))
@@ -1101,7 +1102,7 @@ def t_x():
             try:
                 start_recording(s)
                 time.sleep(3)
-                s.send('q', 0.3); s.send('j', 0.3)
+                s.send(F12, 0.3)
                 s.wait_for('recording is done', 25)
                 s.send('n'); s.wait_exit(5)
                 res.append((sorted(os.listdir(o)), settle_clean(), os.listdir(RUNDIR)))
@@ -1343,7 +1344,7 @@ def t_default_output_dir():
         expect(not os.path.exists(home + '/Videos'), 'Videos exists before the test')
         start_recording(s)
         time.sleep(2)
-        s.send('q', 0.3); s.send('y', 0.3)
+        s.send(F12, 0.3)
         expect(s.wait_for('done', 25), s.screen())
         files = [f for f in os.listdir(home + '/Videos') if f.endswith('.mp4')]
         expect(files, 'no recording in the default folder: ' + str(os.listdir(home)))
@@ -1351,6 +1352,41 @@ def t_default_output_dir():
     finally:
         s.close()
     R.add('T-O1', 'PASS', f'missing default folder {home}/Videos was created and the recording saved there: {files}')
+
+
+@test('T-N1')
+def t_navigation():
+    """Discoverable flow: the form says what comes next, the preview shows Enter = start / Esc = back, recording is stopped only by F12 (not q/Esc/Enter)."""
+    wake()
+    o = out_dir('n1')
+    s = Session(make_home('n1', cfg(extra='COUNTDOWN=off\n')), o)
+    try:
+        expect(s.wait_for('Preview cameras', 5), s.screen())
+        expect('then press' in s.screen() and 'preview, then record' in s.screen(), 'form hints missing:\n' + s.screen())
+        s.send(F5)
+        expect(s.wait_for('PREVIEW', 15), s.screen())
+        scr = s.screen()
+        expect('Start recording' in scr and 'Esc' in scr and 'back to the settings' in scr and 'quit multicam' in scr, 'preview hints missing:\n' + scr)
+        s.send(ESC, 0.5)
+        expect(s.wait_for('Preview cameras', 5) and not mc_clients() and 'PREVIEW' not in s.screen(), 'Esc did not return to the form:\n' + s.screen())
+        s.send(F5)
+        expect(s.wait_for('PREVIEW', 15), s.screen())   # the preview works again after going back
+        s.send(ENTER, 0.3)
+        expect(s.wait_for('RECORDING', 20), s.screen())
+        scr = s.screen()
+        expect('F12' in scr and 'Stop recording' in scr and 'multicam stop' in scr, 'recording hints missing:\n' + scr)
+        time.sleep(2)
+        for k in ('q', ESC, ENTER, 'y'):   # keys typed by accident must not stop the recording
+            s.send(k, 0.4)
+        expect(gsr_pids() and 'RECORDING' in s.screen(), 'a stray key stopped the recording:\n' + s.screen())
+        s.send(F12, 0.3)   # only F12 stops
+        expect(s.wait_for('recording is done', 30), s.screen())
+        s.send('n'); s.wait_exit(5)
+        expect([f for f in os.listdir(o) if f.endswith('.mp4')], 'no file')
+    finally:
+        s.close()
+        shutil.rmtree(o, ignore_errors=True)
+    R.add('T-N1', 'PASS', 'form hint (step 1 ... then press Enter), preview banner (Enter start, Esc back, q quit), Esc returns to the form with cameras closed, preview again, Enter starts, recording banner (F12 stop, multicam stop), q/Esc/Enter/y do not stop, F12 stops and saves')
 
 
 def main():

@@ -539,7 +539,7 @@ LAST_AREA=""; AREA_REUSE=on; FORCE_PICK=0   # last chosen area (X,Y,W,H) and whe
 GEOM=""     # which saved set of positions the cameras currently use: screen | area (empty = no preview yet)
 DEVS=(); DEVNAMES=(); MICS=(); MICDESC=(); MONS=()
 MODE=move; SEL=0; REC=0; REC_START=0; CLEANED=0; DIRTY=0; MSG=""; PROMPT=""
-UPDATED=0; SCR=form; ROW=0; STTY=""; MON=""; MX=0; MY=0; MW=0; MH=0; IN_ALT=0
+GOBACK=0; UPDATED=0; SCR=form; ROW=0; STTY=""; MON=""; MX=0; MY=0; MW=0; MH=0; IN_ALT=0
 RESULT_FILE=""; STOP_PID=""; TUI_ADDR=""; HUPPED=0; START_PID=""
 
 load_config() {
@@ -1307,7 +1307,7 @@ draw_form() {
       start)
         body+=(""); bopt+=(1)
         if ((i == ROW)); then line=" $BTN  ▶  Preview cameras  $R"; else line=" $ACC$BO[ ▶  Preview cameras ]$R"; fi
-        line+="  ${SUB}the recording does not start yet$R"
+        line+="  ${SUB}step 1: arrange the cameras - then press ⏎ to record$R"
         ((i == ROW)) && selb=${#body[@]}
         body+=("$line"); bopt+=(0)
         continue ;;
@@ -1331,7 +1331,7 @@ draw_form() {
   case ${RT[$ROW]} in
     color) ctx=(c "colour picker" C "hex code") ;;
   esac
-  chips "↑↓" "row" "←→" "change" "⏎" "select" "${ctx[@]}" F5 "preview" S "settings" U "update" q "quit"
+  chips "↑↓" "row" "←→" "change" "⏎" "select" "${ctx[@]}" F5 "preview, then record" S "settings" U "update" q "quit"
   foot+=("${CHIPL[@]}")
   fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
 }
@@ -1634,7 +1634,10 @@ draw_run() {
   if [[ $CAPTURE == screen ]]; then where="Full screen: $MON"; else where=$AREA_LABEL; fi
   [[ $CAPTURE == window && $FOLLOW == on && -n $WIN_ADDR ]] && where+="  ·  follows the window"
   head+=("$SUB$where$R")
-  if ((!REC)); then head+=("" " $BTN  ⏎  Start recording  $R  ${SUB}arrange the cameras first - nothing is recorded yet$R"); fi
+  if ((REC)); then head+=("" " $BTN  F12  Stop recording  $R  ${SUB}or click the bar icon / press the keybind again / run: multicam stop$R"
+    " ${SUB}other keys (q, Esc, Enter) do not stop it, so typing in other windows is safe$R")
+  else head+=("" " $BTN  ⏎  Start recording  $R  ${SUB}arrange the cameras first - nothing is recorded yet$R"
+    " ${SUB}Esc = back to the settings   ·   q = quit multicam$R"); fi
   body+=(""); bopt+=(1)
   for i in "${!CAMS[@]}"; do
     id=${CAMS[$i]}
@@ -1662,12 +1665,13 @@ draw_run() {
   else mv="${SUB}move$R"; sz="$ACC$BO[SIZE]$R"; fi
   body+=(" ${SUB}Mode$R  $mv  $sz      ${SUB}Selected camera: $R$FG$BO${CAMS[$SEL]}$R"); bopt+=(0)
   msg_line; hr; foot+=("$MSGL" "$HRL")
-  local ctx=() qlabel=quit
-  ((REC)) && qlabel=stop
+  local ctx=() qchip=(q quit)
+  ((REC)) && qchip=()   # q does not stop a recording (F12 does)
   [[ $CAPTURE != screen ]] && ((!REC)) && ctx=(o "new area")
-  chips Tab "camera" "←↑↓→" "move/size" "⇧" "big steps" m "mode" "+ -" "size" "1-9" "position" "${ctx[@]}" \
+  if ((REC)); then ctx=(F12 "stop recording" "${ctx[@]}"); else ctx=("⏎" "start recording" "Esc" "back" "${ctx[@]}"); fi
+  chips "${ctx[@]}" Tab "camera" "←↑↓→" "move/size" "⇧" "big steps" m "mode" "+ -" "size" "1-9" "position" \
     s "shape" r "ring" "c C" "colour" p "next colour" "[ ]" "thickness" b "background" \
-    q "${qlabel}"
+    "${qchip[@]}"
   foot+=("${CHIPL[@]}")
   fit_body; OUT=("${head[@]}" "${body[@]}" "${foot[@]}"); flush_out
 }
@@ -1780,17 +1784,20 @@ run_loop() { # 0 = done (result in RESULT_FILE), 1 = quit without a result
           save_config
         fi ;;
       q | $'\e')
+        if ((REC)); then MSG=$(_ 'Recording: press F12 to stop (q and Esc do not stop it).')
+        elif [[ $KEY == q ]]; then return 1
+        else GOBACK=1; return 1; fi ;;   # Esc in the preview: close the cameras, back to the form
+      $'\e[24~')   # F12: stop the recording (a key that is unlikely to be typed by accident)
         if ((REC)); then
-          if confirm "$(_ 'Stop the recording and quit?')"; then
-            MSG=$(_ 'Stopping and finalizing...'); draw_run
-            stop_recording
-            RESULT_FILE=$(<"$RUN/result") 2>/dev/null
-            REC=0
-            return 0
-          fi
-        else return 1; fi ;;
-      ENTER)   # only Enter starts; F5 was already used for the preview
-        if ((!REC)); then
+          MSG=$(_ 'Stopping and finalizing...'); draw_run
+          stop_recording
+          RESULT_FILE=$(<"$RUN/result") 2>/dev/null
+          REC=0
+          return 0
+        fi ;;
+      ENTER)   # Enter starts the recording from the preview (F5 was already used for the preview)
+        if ((REC)); then MSG=$(_ 'Recording: press F12 to stop (Enter does not stop it).')
+        elif ((!REC)); then
           if countdown; then   # the TUI hides before the recorder starts, so it is never in the recording
             MSG=$(_ 'Starting recording...'); draw_run
             hide_tui
@@ -1972,6 +1979,8 @@ main() {
       flush_input   # keys pressed while the cameras opened must not start the recording
       if run_loop; then
         ((${#RESULT_FILE})) && result_screen "$RESULT_FILE"
+      elif ((GOBACK)); then   # Esc in the preview: close the cameras and return to the form
+        GOBACK=0; cleanup_windows; MSG=""; continue
       fi
     else
       term_size; header_line; OUT=("$HDRL" "" "$RED$BO✗$R  $FG$MSG$R"); flush_out; sleep 2
