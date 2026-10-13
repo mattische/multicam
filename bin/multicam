@@ -1049,7 +1049,10 @@ start_recording() {
   fi
   local od=${MULTICAM_OUTPUT_DIR:-$OUTDIR}
   od=${od/#\~/$HOME}
-  [[ -n $od ]] && { mkdir -p "$od" 2>/dev/null; export OMARCHY_SCREENRECORD_DIR=$od; }
+  if [[ -n $od ]]; then mkdir -p "$od" 2>/dev/null; export OMARCHY_SCREENRECORD_DIR=$od
+  else   # Omarchy's default folder (same lookup as Omarchy); it refuses to record if the folder does not exist
+    mkdir -p "${OMARCHY_SCREENRECORD_DIR:-${XDG_VIDEOS_DIR:-$HOME/Videos}}" 2>/dev/null
+  fi
   rm -rf "$RUN/result" "$RUN/finish.lock" "$RUN/stop.lock"
   if ((shim)); then
     PATH="$RUN/shim:$PATH" omarchy-capture-screenrecording "${args[@]}" >/dev/null 2>&1 &
@@ -1470,7 +1473,7 @@ SRT=(outdir after hide bar countdown follow step big updcheck); SROW=0
 outdir_label() { # displayed output folder
   if [[ -n ${MULTICAM_OUTPUT_DIR:-} ]]; then ODL="$MULTICAM_OUTPUT_DIR (MULTICAM_OUTPUT_DIR)"
   elif [[ -n $OUTDIR ]]; then ODL=$OUTDIR
-  else ODL="Omarchy default (${OMARCHY_SCREENRECORD_DIR:-$(xdg-user-dir VIDEOS 2>/dev/null || echo ~/Videos)})"; fi
+  else ODL="Omarchy default (${OMARCHY_SCREENRECORD_DIR:-${XDG_VIDEOS_DIR:-~/Videos}})"; fi
   ODL=${ODL//"$HOME"/\~}
 }
 

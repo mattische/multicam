@@ -1333,6 +1333,26 @@ def t_update():
     shutil.rmtree(base, ignore_errors=True)
 
 
+@test('T-O1')
+def t_default_output_dir():
+    """Default output folder (no MULTICAM_OUTPUT_DIR) that does not exist yet: multicam creates it instead of failing with Omarchy's 'Screen recording directory does not exist'."""
+    wake()
+    home = make_home('o1', cfg())
+    s = Session(home, None, env={'XDG_VIDEOS_DIR': home + '/Videos'})
+    try:
+        expect(not os.path.exists(home + '/Videos'), 'Videos exists before the test')
+        start_recording(s)
+        time.sleep(2)
+        s.send('q', 0.3); s.send('y', 0.3)
+        expect(s.wait_for('done', 25), s.screen())
+        files = [f for f in os.listdir(home + '/Videos') if f.endswith('.mp4')]
+        expect(files, 'no recording in the default folder: ' + str(os.listdir(home)))
+        s.send('n'); s.wait_exit(5)
+    finally:
+        s.close()
+    R.add('T-O1', 'PASS', f'missing default folder {home}/Videos was created and the recording saved there: {files}')
+
+
 def main():
     names = sys.argv[1:]
     order = TESTS.get('_order', [])
