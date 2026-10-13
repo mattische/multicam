@@ -1611,7 +1611,7 @@ form_loop() { # 0 = start preview, 1 = quit
           bgsetup) shell_out cmd_install_bgremove ;;
           *) form_change 1 ;;
         esac ;;
-      q | $'\e') return 1 ;;
+      q) return 1 ;;   # only q quits (Esc does nothing here)
     esac
     case $KEY in $'\e[A' | $'\eOA' | k | $'\e[B' | $'\eOB' | j) ;; *) save_config ;; esac
   done

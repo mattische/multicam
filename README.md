@@ -248,7 +248,7 @@ Form screen
 | `U` | check for / install an update |
 | ←/→ or Enter on `Area` | reuse the last area / pick a new one (area mode) |
 | Enter on `Remove background` | install the background-removal add-on (when not installed) |
-| `q`, `Esc` | quit |
+| `q` | quit (Esc does nothing here) |
 
 Preview / recording screen
 

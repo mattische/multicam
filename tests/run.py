@@ -219,7 +219,7 @@ def t_b2():
         s.send(DOWN); s.send(ENTER); seen.append(('desktop audio', '● on' in s.screen().split('Desktop audio')[1].split('\n')[0]))
         s.send(DOWN); s.send(RIGHT); seen.append(('record', '● area' in s.screen()))
         s.send(DOWN); s.send(RIGHT); seen.append(('screen', 'focused' not in s.screen().split('Screen')[1].split('\n')[0]))
-        s.send(ESC); expect(s.wait_exit(5), 'did not exit')
+        s.send(ESC, 0.4); expect(not s.wait_exit(1), 'Esc quit the form'); s.send('q'); expect(s.wait_exit(5), 'did not exit')
         bad = [n for n, ok in seen if not ok]
         expect(not bad, f'not changeable: {bad}\n{s.screen()}')
         R.add('T-B2', 'PASS', 'pty without mouse: all rows (camera A/B, shape, ring, colour, hex code, thickness, mic, desktop audio, screen) changed with arrows/Enter/C; ' + ', '.join(n for n, _ in seen))
@@ -1369,6 +1369,8 @@ def t_navigation():
         expect('Start recording' in scr and 'Esc' in scr and 'back to the settings' in scr and 'quit multicam' in scr, 'preview hints missing:\n' + scr)
         s.send(ESC, 0.5)
         expect(s.wait_for('Preview cameras', 5) and not mc_clients() and 'PREVIEW' not in s.screen(), 'Esc did not return to the form:\n' + s.screen())
+        s.send(ESC, 0.5); s.send(ESC, 0.5)   # Esc in the form does nothing: only q quits
+        expect('Preview cameras' in s.screen() and not s.wait_exit(0.5), 'Esc in the form quit or changed screen:\n' + s.screen())
         s.send(F5)
         expect(s.wait_for('PREVIEW', 15), s.screen())   # the preview works again after going back
         s.send(ENTER, 0.3)
