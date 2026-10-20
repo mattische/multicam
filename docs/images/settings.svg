@@ -20,7 +20,7 @@
     <text x="290" y="173">~/Videos/demos</text>
     <text x="450" y="173" fill="#737aa2">⏎ edit</text>
     <text x="70" y="202">After recording</text>
-    <text x="290" y="202"><tspan fill="#7aa2f7">●</tspan> <tspan font-weight="bold">ask to open in omacut</tspan>   <tspan fill="#737aa2">○ open in omacut   ○ just show the file</tspan></text>
+    <text x="290" y="202"><tspan fill="#7aa2f7">●</tspan> <tspan font-weight="bold">ask to open the folder</tspan>   <tspan fill="#737aa2">○ open the folder   ○ just show the file</tspan></text>
     <text x="70" y="228">Hide while recording</text>
     <text x="290" y="228"><tspan fill="#7aa2f7">●</tspan> on  <tspan fill="#737aa2">multicam comes back when the recording stops</tspan></text>
     <text x="70" y="254">Bar indicator</text>

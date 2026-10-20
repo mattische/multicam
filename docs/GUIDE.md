@@ -18,7 +18,7 @@ remembers all settings between runs, hides itself while recording and shows a bl
 Required: `hyprctl`, `jq`, `mpv`, `pactl`, `gpu-screen-recorder` and Omarchy's `omarchy-capture-screenrecording`,
 `omarchy-capture-region`, `omarchy-launch-tui` (all part of a normal Omarchy install; multicam stops with
 "multicam needs Omarchy" if one of the Omarchy scripts is missing).
-Optional: `v4l2-ctl` (picks camera resolution), `hyprpicker` (colour picker), `omacut` (open result),
+Optional: `v4l2-ctl` (picks camera resolution), `hyprpicker` (colour picker),
 `ffmpeg` (cropping when following a window), `python3` + `curl` (background-removal add-on), `git` (update check).
 `install.sh` never uses root or the package manager; the AUR package is the system-wide alternative.
 
@@ -152,7 +152,7 @@ The update source is the `origin` URL of the clone you installed from.
    red record icon with the elapsed time appears in the bar. The camera windows stay.
 4. Stop: click the red icon in the bar, press the keybind (`SUPER + ALT + M`) again, run `multicam stop`, or use
    Omarchy's own stop (Alt+Print). multicam comes back on the workspace you are on, shows the file name and (by
-   default) offers to open it in omacut.
+   default) offers to open its folder (tick "don't show this again" with Space to stop asking).
 
 ![While recording: multicam is hidden, the bar shows a blinking red icon](images/recording.svg)
 
@@ -174,7 +174,7 @@ Press `S` in the form. Every change is saved at once to `~/.config/multicam/conf
 | Setting | Values (default first) |
 |---|---|
 | Save recordings to | Omarchy's folder (`~/Videos`) or any folder you type (Enter edits, empty = default; created when needed) |
-| After recording | ask to open in omacut, open in omacut, just show the file |
+| After recording | ask to open the folder, open the folder, just show the file |
 | Hide while recording | on, off |
 | Bar indicator | on, off (the plugin stays installed; off means multicam does not show the icon; see [Bar indicator](#bar-indicator)) |
 | Countdown | 3 s, 5 s, 10 s, off (before recording starts; `COUNTDOWN=off\|3\|5\|10`) |

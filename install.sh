@@ -56,7 +56,7 @@ if ((${#missing[@]})); then
   echo "Missing dependencies (install them yourself, nothing is installed here): ${missing[*]}" >&2
   exit 1
 fi
-for c in v4l2-ctl hyprpicker omacut git; do
+for c in v4l2-ctl hyprpicker git; do
   command -v "$c" >/dev/null || echo "Note: optional program missing: $c"
 done
 

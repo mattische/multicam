@@ -43,7 +43,7 @@ Your recordings are never touched. AUR: also `sudo pacman -Rns multicam`.
 ## Dependencies
 
 Normal Omarchy install: `hyprctl`, `jq`, `mpv`, `pactl`, `gpu-screen-recorder`, `omarchy-capture-screenrecording`.
-Optional: `v4l2-ctl`, `hyprpicker` (colour picker), `omacut` (open the result), `ffmpeg` (follow a window), `git` (updates),
+Optional: `v4l2-ctl`, `hyprpicker` (colour picker), `ffmpeg` (follow a window), `git` (updates),
 `python3` + `curl` (background removal, ~300 MB, installed by default and can be skipped with `--no-bgremove`).
 
 ## Use

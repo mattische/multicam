@@ -1491,9 +1491,9 @@ draw_settings() {
         label="Save recordings to"; val="$FG$ODL$R"; hint="⏎ edit" ;;
       after) label="After recording"
         case $AFTER in
-          ask) radio 0 "ask to open in omacut" "open in omacut" "just show the file" ;;
-          open) radio 1 "ask to open in omacut" "open in omacut" "just show the file" ;;
-          nothing) radio 2 "ask to open in omacut" "open in omacut" "just show the file" ;;
+          ask) radio 0 "ask to open the folder" "open the folder" "just show the file" ;;
+          open) radio 1 "ask to open the folder" "open the folder" "just show the file" ;;
+          nothing) radio 2 "ask to open the folder" "open the folder" "just show the file" ;;
         esac; val=$RAD ;;
       hide) label="Hide while recording"; toggle "$HIDE_WIN"; val="$RAD  ${SUB}multicam comes back when the recording stops$R" ;;
       bar) label="Bar indicator"; toggle "$BAR_IND"; val="$RAD  ${SUB}blinking red icon in the bar, click stops$R" ;;
@@ -1855,19 +1855,23 @@ result_screen() {
     d=${f/#"$HOME"/\~}
     header_line; OUT=("$HDRL" "" "$GRN$BO✓$R  $FG${BO}The recording is done:$R" "   $ACC$d$R" "")
     [[ -f $RUN/follow.failed ]] && OUT+=("$YEL⚠$R  ${FG}Following the window failed: the file shows the whole monitor.$R" "")
-    if [[ $AFTER == open ]] && need omacut; then
-      OUT+=("${SUB}Opening in omacut...$R"); flush_out
-      setsid -f omacut "$f" >/dev/null 2>&1 </dev/null; sleep 1
-    elif [[ $AFTER == ask ]] && need omacut; then
-      OUT+=("${FG}Open in omacut?$R  $KEYC Y $R ${SUB}yes$R   $KEYC n $R ${SUB}no$R")
-      flush_out
-      read_key 60
-      case $KEY in
-        n | N) ;;
-        *) setsid -f omacut "$f" >/dev/null 2>&1 </dev/null ;;
-      esac
+    if [[ $AFTER == open ]] && need xdg-open; then
+      OUT+=("${SUB}Opening the folder...$R"); flush_out
+      setsid -f xdg-open "${f%/*}" >/dev/null 2>&1 </dev/null; sleep 1
+    elif [[ $AFTER == ask ]] && need xdg-open; then
+      local base=("${OUT[@]}") box=" "
+      while :; do
+        OUT=("${base[@]}" "${FG}Open the folder?$R  $KEYC Y $R ${SUB}yes$R   $KEYC n $R ${SUB}no$R"
+          "" "$FG[$box]$R ${SUB}don't show this again$R  $KEYC Space $R ${SUB}tick$R")
+        flush_out
+        read_key 60 || { KEY=n; break; }
+        [[ $KEY == " " ]] && { [[ $box == " " ]] && box=x || box=" "; continue; }
+        [[ $KEY == [yYnN] || $KEY == ENTER || $KEY == $'\e' ]] && break
+      done
+      if [[ $box == x ]]; then AFTER=nothing; save_config; fi
+      [[ $KEY == [yY] || $KEY == ENTER ]] && setsid -f xdg-open "${f%/*}" >/dev/null 2>&1 </dev/null
     else
-      [[ $AFTER != nothing ]] && OUT+=("$SUB(omacut is not installed)$R")
+      [[ $AFTER != nothing ]] && OUT+=("$SUB(xdg-open is not installed)$R")
       OUT+=("${SUB}Press any key to close.$R"); flush_out; read_key 60
     fi
   else
